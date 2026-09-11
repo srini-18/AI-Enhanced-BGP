@@ -5,7 +5,7 @@ import { RunResult, SimState } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History, FileText } from 'lucide-react';
+import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History, FileText, Clock } from 'lucide-react';
 import { AutoBenchmarkRunner } from './auto-benchmark';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -74,11 +74,13 @@ export function BenchmarkPanel({
   onInject,
   onWithdraw,
   onStart,
+  onJumpToTime,
 }: {
   state: SimState;
   onInject: (scenarioId: string) => void;
   onWithdraw: () => void;
   onStart: () => void;
+  onJumpToTime: (t: number, label: string) => void;
 }) {
   const { toast } = useToast();
   const history = state.history;
@@ -217,7 +219,7 @@ export function BenchmarkPanel({
             </TableHeader>
             <TableBody>
               {history.map((r) => (
-                <TableRow key={r.runId} className="border-slate-900">
+                <TableRow key={r.runId} className="border-slate-900 group/jump">
                   <TableCell className="text-[10px] font-mono text-slate-500 py-1.5">{r.runId}</TableCell>
                   <TableCell className="text-[10px] font-mono text-slate-300 py-1.5">{r.scenarioId}</TableCell>
                   <TableCell className="py-1.5">
@@ -230,7 +232,17 @@ export function BenchmarkPanel({
                     {r.ribVerified ? <CheckCircle2 className="h-3 w-3 text-emerald-400 mx-auto" /> : <XCircle className="h-3 w-3 text-slate-600 mx-auto" />}
                   </TableCell>
                   <TableCell className="text-center py-1.5">
-                    {r.msr ? <CheckCircle2 className="h-3 w-3 text-emerald-400 mx-auto" /> : <XCircle className="h-3 w-3 text-red-500 mx-auto" />}
+                    <div className="flex items-center justify-center gap-1">
+                      {r.msr ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <XCircle className="h-3 w-3 text-red-500" />}
+                      <button
+                        onClick={() => onJumpToTime(r.injectedAt, `${r.scenarioId} · run #${r.runId}`)}
+                        className="opacity-0 group-hover/jump:opacity-100 focus-visible:opacity-100 transition-opacity text-slate-500 hover:text-violet-300 p-0.5 rounded"
+                        title={`time-travel to t=${r.injectedAt}s (${r.scenarioId} injection)`}
+                        aria-label={`jump to ${r.scenarioId} run ${r.runId} injection time in analytics`}
+                      >
+                        <Clock className="h-3 w-3" />
+                      </button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

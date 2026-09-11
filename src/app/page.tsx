@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useBgpSim } from '@/lib/bgp-sim/client';
-import { SimConfig, RunResult } from '@/lib/bgp-sim/types';
+import { SimConfig, RunResult, SimEvent } from '@/lib/bgp-sim/types';
+import { playAlert, alertForEvent, primeAudioUnlock, isMuted, setMuted } from '@/lib/bgp-sim/sound';
 import { TopologyGraph } from '@/components/bgp/topology-graph';
 import { ControlCenter } from '@/components/bgp/control-center';
 import { AttackPanel } from '@/components/bgp/attack-panel';
@@ -22,7 +23,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, RotateCcw, Radio, CircleDot, Layers, SlidersHorizontal, BarChart3,
-  Trophy, BookOpen, Sparkles, Keyboard,
+  Trophy, BookOpen, Sparkles, Keyboard, Volume2, VolumeX,
 } from 'lucide-react';
 
 function PipelineStrip({ config, running }: { config: SimConfig; running: boolean }) {
@@ -37,7 +38,7 @@ function PipelineStrip({ config, running }: { config: SimConfig; running: boolea
     { name: 'Rollback', on: config.rollback.enabled, tone: 'text-emerald-300 border-emerald-800 bg-emerald-950/40' },
   ];
   return (
-    <div className="flex items-center gap-1 flex-wrap">
+    <div className="flex items-center gap-1.5 flex-wrap">
       {stages.map((s, i) => (
         <React.Fragment key={s.name}>
           {i > 0 && (
@@ -48,7 +49,7 @@ function PipelineStrip({ config, running }: { config: SimConfig; running: boolea
             </span>
           )}
           <span
-            className={`text-[9.5px] font-mono px-1.5 py-0.5 rounded border transition-all ${s.on ? `${s.tone} shadow-sm` : 'text-slate-600 border-slate-800 bg-slate-900/40 line-through'}`}
+            className={`text-[9.5px] font-mono px-2 py-0.5 rounded border transition-all ${s.on ? `${s.tone} shadow-sm` : 'text-slate-600 border-slate-800 bg-slate-900/40 line-through'}`}
             title={s.on ? 'enabled' : 'disabled'}
           >
             {s.name}
@@ -103,13 +104,93 @@ export default function Home() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('control');
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [soundOn, setSoundOn] = useState(!isMuted());
+  // cross-tab deep link: jumping from Benchmark run history into the time-travel scrubber
+  const [jumpTarget, setJumpTarget] = useState<{ t: number; nonce: number } | null>(null);
 
   const running = state?.running ?? false;
   const activeRun = state?.activeRun ?? null;
   // server-tracked config variant label (engine updates it on preset/edit/reset)
   const variantLabel = state?.variantLabel ?? 'A4 · Full System';
 
-  /** Keyboard shortcuts: Space run/pause · R reset · 1-5 tabs · ? help */
+  /** unlock Web Audio on the first user gesture (browser autoplay policy) */
+  useEffect(() => primeAudioUnlock(), []);
+
+  /** NOC sound alerts — watch for NEW events and map them to tones */
+  const events: SimEvent[] | undefined = state?.events;
+  const lastEventIdRef = useRef<number>(-1);
+  const prevEventsRef = useRef<SimEvent[] | undefined>(undefined);
+  useEffect(() => {
+    if (!events || events.length === 0) {
+      lastEventIdRef.current = -1;
+      prevEventsRef.current = events;
+      return;
+    }
+    const maxId = events[events.length - 1].id;
+    // first observation (or engine reset restarted ids) — baseline without sound
+    if (lastEventIdRef.current === -1 || maxId < lastEventIdRef.current) {
+      lastEventIdRef.current = maxId;
+      prevEventsRef.current = events;
+      return;
+    }
+    if (maxId > lastEventIdRef.current) {
+      for (const e of events) {
+        if (e.id > lastEventIdRef.current) {
+          const tone = alertForEvent(e.source, e.level, e.message);
+          if (tone) playAlert(tone);
+        }
+      }
+      lastEventIdRef.current = maxId;
+    }
+    prevEventsRef.current = events;
+  }, [events]);
+
+  /** run-completion toasts — notify when a run lands in history (reset-aware) */
+  const history: RunResult[] | undefined = state?.history;
+  const runGenRef = useRef(0); // bumped on engine reset (history shrink) so runIds can repeat
+  const histLenRef = useRef(0);
+  const seenRunKeyRef = useRef('');
+  useEffect(() => {
+    if (!history) return;
+    if (history.length < histLenRef.current) {
+      // engine reset — history restarted; runIds will repeat
+      runGenRef.current += 1;
+      histLenRef.current = history.length;
+      seenRunKeyRef.current = '';
+      return;
+    }
+    histLenRef.current = history.length;
+    if (history.length === 0) return;
+    // engine emits history newest-first — the head entry is the latest landed run
+    const last = history[0];
+    const key = `${runGenRef.current}:${last.runId}`;
+    if (seenRunKeyRef.current === '') {
+      // first observation of this generation — baseline, swallow pre-existing tail
+      seenRunKeyRef.current = key;
+      return;
+    }
+    if (key === seenRunKeyRef.current) return;
+    seenRunKeyRef.current = key;
+    if (last.phase === 'rolledback') {
+      toast({
+        title: `Run #${last.runId} · ${last.scenarioId} rolled back`,
+        description: `Autonomous rollback complete — LocalPref ${last.appliedLocPref ?? 0} → ${state?.config.policy.lpNormal ?? 100} restored after sustained healthy ticks.`,
+      });
+    } else if (last.phase === 'failed') {
+      toast({
+        title: `Run #${last.runId} · ${last.scenarioId} failed`,
+        description: last.detectedAt === null ? 'Attack was never detected — mitigation missed.' : 'Mitigation did not complete successfully.',
+        variant: 'destructive',
+      });
+    } else if (last.phase === 'mitigated' || last.phase === 'detected') {
+      toast({
+        title: `Run #${last.runId} · ${last.scenarioId} closed (${last.phase})`,
+        description: `${last.appliedPolicy || 'no override'} · MTTD ${last.mttd ?? '—'}s · MTTM ${last.mttm ?? '—'}s${last.msr ? ' · mitigated' : ''}.`,
+      });
+    }
+  }, [history, toast]);
+
+  /** Keyboard shortcuts: Space run/pause · R reset · M mute · 1-5 tabs · ? help */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -127,13 +208,17 @@ export default function Home() {
       } else if (['1', '2', '3', '4', '5'].includes(e.key)) {
         const tab = ['control', 'analytics', 'benchmark', 'copilot', 'docs'][Number(e.key) - 1];
         setActiveTab(tab);
+      } else if (e.key.toLowerCase() === 'm') {
+        const next = !soundOn;
+        setSoundOn(next);
+        setMuted(!next);
       } else if (e.key === '?' || (e.shiftKey && e.key === '/')) {
         setShowShortcuts((s) => !s);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [running, start, pause, reset, toast]);
+  }, [running, start, pause, reset, toast, soundOn]);
 
   return (
     <div className="dark min-h-screen flex flex-col bg-slate-950 text-slate-200 noc-grid-bg">
@@ -192,6 +277,25 @@ export default function Home() {
             <Button
               size="sm"
               variant="outline"
+              title={soundOn ? 'sound alerts on — click to mute' : 'sound alerts muted — click to enable'}
+              aria-pressed={soundOn}
+              aria-label="toggle sound alerts"
+              onClick={() => {
+                const next = !soundOn;
+                setSoundOn(next);
+                setMuted(!next);
+                if (next) {
+                  // gesture context — safe to probe the audio pipeline
+                  playAlert('success');
+                }
+              }}
+              className={`h-8 w-8 p-0 ${soundOn ? 'border-emerald-700 text-emerald-300 hover:bg-emerald-950/40' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}
+            >
+              {soundOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               title="?"
               onClick={() => setShowShortcuts((s) => !s)}
               className="h-8 w-8 p-0 border-slate-700 text-slate-400 hover:bg-slate-800"
@@ -245,6 +349,7 @@ export default function Home() {
               {[
                 ['Space', 'run / pause the simulation clock'],
                 ['R', 'reset to 10-AS baseline'],
+                ['M', 'mute / unmute NOC sound alerts'],
                 ['1 – 5', 'switch tabs (control · analytics · benchmark · copilot · docs)'],
                 ['?', 'toggle this help'],
               ].map(([k, d]) => (
@@ -396,7 +501,11 @@ export default function Home() {
             <TabsContent value="analytics" className="mt-3">
               <AnalyticsPanel state={state} />
               <div className="mt-4">
-                <TimeTravelScrubber state={state} />
+                <TimeTravelScrubber
+                  key={jumpTarget ? `jump-${jumpTarget.nonce}` : 'base'}
+                  state={state}
+                  initialT={jumpTarget?.t ?? null}
+                />
               </div>
               <div className="mt-4">
                 <ScenarioDeepDive state={state} />
@@ -413,6 +522,14 @@ export default function Home() {
                 }}
                 onWithdraw={withdrawAttack}
                 onStart={start}
+                onJumpToTime={(t, label) => {
+                  setJumpTarget({ t, nonce: Date.now() });
+                  setActiveTab('analytics');
+                  toast({
+                    title: 'Time-travel jump',
+                    description: `Scrubber moved to t=${t}s (${label}) — replay this run in the Analytics tab.`,
+                  });
+                }}
               />
             </TabsContent>
 
@@ -504,6 +621,27 @@ Historical defenses compared in parallel:
                   <p className="mt-3 text-[11px] font-mono text-slate-500">
                     Based on the AI-Enhanced BGP research project (v3.0) — 10-AS FRR testbed, empirical telemetry training, MTTD/MTTM/MSR benchmarking.
                   </p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 lg:col-span-2">
+                  <span className="text-sm font-semibold text-slate-100">Operator Tooling</span>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {[
+                      ['NOC sound alerts', 'synthesized tones on injection, detection, quarantine and rollback — header mute toggle persists'],
+                      ['Time-travel scrubber', 'replay any t in the Analytics tab — run bands, event markers, trust reconstruction at T'],
+                      ['Run deep-links', 'hover a run row in Benchmark and jump its injection moment into the scrubber'],
+                      ['Streaming AI copilot', 'token-by-token LLM analysis of live engine state (Enter to send) + markdown transcript export'],
+                      ['Run archive exports', 'SQLite-persisted runs → styled standalone HTML report or CSV'],
+                      ['Auto-benchmark sweep', 'sequential S1→S6 injection with per-scenario progress and abort'],
+                      ['Keyboard control', 'Space run/pause · R reset · 1-5 tabs · ? help'],
+                      ['Live route-map preview', 'FRR-style config generated from your sliders — copy or download .conf'],
+                      ['RIB verification log', 'two-layer commit audit with pass-rate and retry tracking'],
+                    ].map(([name, desc]) => (
+                      <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
+                        <div className="text-[11px] font-semibold text-slate-200">{name}</div>
+                        <div className="text-[10px] text-slate-500 mt-1">{desc}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </TabsContent>

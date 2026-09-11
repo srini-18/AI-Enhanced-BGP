@@ -84,6 +84,8 @@ function RouteRow({
   isOpen,
   quarantined,
   onToggle,
+  rollbackTicks,
+  simTime,
 }: {
   r: RouteSnapshot;
   st: { badge: string; dot: string; label: string };

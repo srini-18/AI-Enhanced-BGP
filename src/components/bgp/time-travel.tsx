@@ -60,11 +60,11 @@ function trustTone(v: number): string {
 
 const SPEEDS = [5, 15, 40, 100];
 
-export function TimeTravelScrubber({ state }: { state: SimState }) {
+export function TimeTravelScrubber({ state, initialT = null }: { state: SimState; initialT?: number | null }) {
   const { events, history, activeRun, ribLog, trustHistory, simTime } = state;
 
-  const [scrubT, setScrubT] = useState<number>(simTime);
-  const [following, setFollowing] = useState(true);
+  const [scrubT, setScrubT] = useState<number>(initialT ?? simTime);
+  const [following, setFollowing] = useState(initialT == null);
   const [playing, setPlaying] = useState(false);
   const [speedIdx, setSpeedIdx] = useState(1);
   const timelineRef = useRef<HTMLDivElement>(null);

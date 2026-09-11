@@ -216,3 +216,46 @@ Unresolved issues / risks:
 - VLM notes top-nav pipeline pill density is tight at some widths (cosmetic, NOC-intentional)
 - Time-travel phase reconstruction shows 'mitigated' (not 'rolledback') for runs finalized via the withdraw-without-rollback path — correct per engine semantics (rolledBackAt only set when rollback completes while attack tracked)
 - Next-phase candidates: sound alerts on quarantine, copilot conversation export, per-run timeline deep-link (?t=), replay export as video/GIF, light theme (if requested), localization
+
+---
+Task ID: 11
+Agent: main
+Task: QA round + critical crash fix + NOC sound alerts + run deep-links + copilot transcript export + completion toasts
+
+Work Log:
+- QA pass via agent-browser: all 5 tabs + last-round features intact (streaming copilot answered with live state, time-travel scrubber LIVE-follows, HTML report + 53 records); 0 console errors at baseline
+- CRITICAL BUG FOUND & FIXED (app-crashing): route-table.tsx RouteRow declared `rollbackTicks: number; simTime: number` in its prop TYPE but never destructured them in the function parameters → `ReferenceError: rollbackTicks is not defined` whenever a route entered the recovery phase (underOverride && recoveryStreak > 0), crashing the entire client (Next.js error overlay, blank app). Leftover from a previous session's mid-write file corruption. Fix: added both to the destructured params. Verified: multiple full attack lifecycles with quarantine→recovery→rollback now render without crashing (previously guaranteed crash path).
+- BUG FOUND & FIXED (toast watcher): run-completion toasts initially never fired — two root causes:
+  1. Engine emits state.history NEWEST-FIRST (`slice(-14).reverse()`) — watcher read `history[history.length-1]` (the OLDEST run). Fix: watch `history[0]`.
+  2. Re-baseline logic swallowed the first completion after every engine reset (reviewer resets every 15 min). Fix: generation counter bumped on history shrink + seen-run key = `${gen}:${runId}`.
+  3. Coverage gap: only rolledback/failed toasted; most runs close as 'mitigated'. Fix: added mitigated/detected closure toast with policy + MTTD/MTTM.
+  Also fixed misleading rollback toast text (was "restored to {appliedLocPref=0}"; now "LocalPref {applied} → {config lpNormal} restored").
+  Verified live: "Run #20 · S2 closed (mitigated) Quarantine · MTTD 5s · MTTM 10s" and "Run #21 · S1 rolled back — Autonomous rollback complete" both fired at the exact landing moment.
+- NEW: NOC Sound Alert System (src/lib/bgp-sim/sound.ts)
+  - Web Audio API oscillator synthesis — zero audio assets; 5 tones: inject (low double-thud 220/165Hz), detection (rising 659/880), quarantine (urgent descending square 880/587/440), success/rollback (major arpeggio 523/659/784), failed (low sawtooth buzz)
+  - Envelope: exponential attack/release per note; lazy AudioContext + primeAudioUnlock() on first pointer/key gesture (autoplay policy)
+  - Mute persists via localStorage ('bgp-noc-muted'); header Volume2/VolumeX toggle button (aria-pressed, emerald when on, plays probe tone on unmute); M keyboard shortcut; shortcut help updated
+  - Event watcher in page.tsx maps new events (id-increment tracking, reset-aware re-baseline) to tones via alertForEvent(); watcher effect verified running every tick via temporary debug logging (removed)
+- NEW: Run deep-links (cross-tab integration)
+  - Benchmark run-history rows: hover-revealed clock icon button per row (group/jump, focus-visible accessible) → onJumpToTime(injectedAt, label)
+  - page.tsx jumpTarget state {t, nonce} → Analytics tab auto-switch + TimeTravelScrubber remounts via key={nonce} with initialT (no setState-in-effect; useState initializer: scrubT=initialT, following=initialT==null)
+  - Verified: clicked "jump to S2 run 13" → tab switched, scrubber at exactly T=8660s (Δ live 2945s), phase chips reconstructed correctly ("S2 injected" at that T), toast confirmation, LIVE button restores following
+- NEW: Copilot transcript export (ai-assistant.tsx)
+  - ".md" button in chat header (appears when messages exist): builds markdown transcript (title, export timestamp, variant/sim-clock context header, Operator/Copilot sections, footer) → blob download
+- NEW: Run-completion event toasts (page.tsx) — see toast watcher fix above; rolledback (success), failed (destructive), mitigated/detected (info with policy+metrics)
+- Styling polish:
+  - Pipeline pills: gap-1→1.5, px-1.5→2 (VLM density note from last round addressed)
+  - ARCHITECTURE tab: new "Operator Tooling" card documenting all 9 interactive features (sound alerts, time-travel, deep-links, streaming copilot, exports, sweep, keyboard, route-map preview, RIB log)
+- Final verification: lint clean; fresh reload 0 console errors; mobile 390px no overflow + sound button visible; VLM confirms header buttons + no layout glitches; sound toggle + M-key + localStorage persistence verified; reviewer interference accounted for (their resets now correctly re-baseline the toast watcher instead of swallowing completions)
+
+Stage Summary:
+- Critical crash bug (rollbackTicks destructuring) root-caused and fixed — recovery phase was guaranteed crash territory
+- Toast watcher fixed for engine's newest-first history + reset generations + full phase coverage
+- 4 new features shipped: NOC sound alerts (Web Audio, persistent mute, M shortcut), Benchmark→Analytics run deep-links, copilot markdown transcript export, run-completion toasts
+- Docs tab now documents the operator tooling surface
+
+Unresolved issues / risks:
+- Concurrent cron review job still resets/injects mid-test (~every 15 min) — environmental; toast/sound watchers are now reset-aware so completions after resets still notify
+- Sound alerts verified code-wise (no console errors, mute state, M-key) but audible output cannot be confirmed in headless browser — verify in a real browser session
+- Headless VLM calls occasionally time out under load (retry with -o output file works)
+- Next-phase candidates: copilot streaming markdown table rendering, per-prefix drill-down page, replay export as GIF, config diff view (current vs A4 default), light theme (if requested)
