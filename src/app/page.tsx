@@ -2,9 +2,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useBgpSim } from '@/lib/bgp-sim/client';
-import { SimConfig, RunResult, SimEvent, SimState } from '@/lib/bgp-sim/types';
+import { SimConfig, RunResult, SimEvent, SimState, ATTACK_SCENARIOS, RouteSnapshot } from '@/lib/bgp-sim/types';
 import { playAlert, alertForEvent, primeAudioUnlock, isMuted, setMuted } from '@/lib/bgp-sim/sound';
 import { TopologyGraph } from '@/components/bgp/topology-graph';
+import { PrefixDrilldown } from '@/components/bgp/prefix-drilldown';
 import { ControlCenter } from '@/components/bgp/control-center';
 import { AttackPanel } from '@/components/bgp/attack-panel';
 import { RouteTable } from '@/components/bgp/route-table';
@@ -154,6 +155,8 @@ export default function Home() {
   const [soundOn, setSoundOn] = useState(!isMuted());
   // cross-tab deep link: jumping from Benchmark run history into the time-travel scrubber
   const [jumpTarget, setJumpTarget] = useState<{ t: number; nonce: number } | null>(null);
+  // per-prefix drill-down modal (opened from route rows + RIB log)
+  const [drillPrefix, setDrillPrefix] = useState<string | null>(null);
 
   const running = state?.running ?? false;
   const activeRun = state?.activeRun ?? null;
@@ -490,7 +493,24 @@ export default function Home() {
                         defender: AS{state.config.global.defenderAs} · 18 eBGP sessions
                       </span>
                     </div>
-                    <TopologyGraph nodes={state.nodes} edges={state.edges} defenderAs={state.config.global.defenderAs} />
+                    <TopologyGraph
+                      nodes={state.nodes}
+                      edges={state.edges}
+                      defenderAs={state.config.global.defenderAs}
+                      attackPath={(() => {
+                        if (!activeRun || !['injected', 'detected', 'mitigated'].includes(activeRun.phase)) return null;
+                        const scenario = ATTACK_SCENARIOS.find((s) => s.id === activeRun.scenarioId);
+                        const route: RouteSnapshot | undefined = scenario
+                          ? state.routes[scenario.prefix]
+                          : Object.values(state.routes).find(
+                              (r) => r.route.active && r.status !== 'normal' && !r.underOverride,
+                            ) ?? Object.values(state.routes).find((r) => r.status === 'hijack' || r.status === 'leak');
+                        if (!route || !route.route.active) return null;
+                        const asns = route.route.asPath.split(/\s+/).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+                        if (asns.length < 2) return null;
+                        return { asnPath: asns, prefix: route.route.prefix, scenarioId: activeRun.scenarioId, phase: activeRun.phase };
+                      })()}
+                    />
                   </div>
 
                   <div>
@@ -514,12 +534,12 @@ export default function Home() {
                           );
                         })()}
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500">{Object.keys(state.routes).length} prefixes · click a route for diagnostics</span>
+                      <span className="text-[10px] font-mono text-slate-500">{Object.keys(state.routes).length} prefixes · click a route for diagnostics · ⌖ for full history</span>
                     </div>
-                    <RouteTable state={state} />
+                    <RouteTable state={state} onFocusPrefix={setDrillPrefix} />
                   </div>
 
-                  <RibLogViewer state={state} />
+                  <RibLogViewer state={state} onFocusPrefix={setDrillPrefix} />
 
                   <RouteMapPreview config={state.config} />
                 </div>
@@ -527,6 +547,17 @@ export default function Home() {
                 <div className="space-y-4 xl:sticky xl:top-28">
                   <AttackPanel
                     activeScenarioId={activeRun?.scenarioId ?? null}
+                    activePhase={activeRun?.phase ?? null}
+                    activeElapsedSec={
+                      activeRun ? Math.max(0, Math.round((state?.simTime ?? 0) - activeRun.injectedAt)) : 0
+                    }
+                    activeRemainingSec={(() => {
+                      if (!activeRun) return null;
+                      const sc = ATTACK_SCENARIOS.find((s) => s.id === activeRun.scenarioId);
+                      if (!sc) return null; // custom attack — duration not tracked in RunResult
+                      const elapsed = Math.max(0, Math.round((state?.simTime ?? 0) - activeRun.injectedAt));
+                      return Math.max(0, sc.defaultDurationSec - elapsed);
+                    })()}
                     onInject={(id) => {
                       injectAttack(id);
                       toast({ title: `Scenario ${id} injected`, description: 'Rogue announcement propagating through the 10-AS testbed.' });
@@ -538,12 +569,12 @@ export default function Home() {
                     onCustom={injectCustom}
                   />
                   <div className="h-[420px] hidden xl:block">
-                    <EventLog events={state.events} />
+                    <EventLog events={state.events} simTime={state.simTime} />
                   </div>
                 </div>
 
                 <div className="xl:hidden col-span-full">
-                  <EventLog events={state.events} />
+                  <EventLog events={state.events} simTime={state.simTime} />
                 </div>
               </div>
             </TabsContent>
@@ -689,6 +720,8 @@ Historical defenses compared in parallel:
                       ['Config diff monitor', 'live drift view of every knob vs the A4 baseline — grouped by subsystem with restore button'],
                       ['Trust trajectory sparklines', 'per-prefix trust history with policy-tier bands and minimum marker inside route diagnostics'],
                       ['Threat condition level', 'DEFCON-style L5→L1 posture indicator in the header, derived from routes and run phase'],
+                      ['Prefix drill-down forensics', '⌖ on any route row (or RIB log prefix) opens a modal: trust decomposition τ = Σ wᵢ·tᵢ, full trajectory chart, run lifecycle timeline, per-prefix event stream and RIB audit'],
+                      ['Attack path overlay', 'topology renders the live hijack propagation path as an animated red flow from origin toward the defender — switches to a blocked ✕ marker when quarantine commits'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>
@@ -700,6 +733,11 @@ Historical defenses compared in parallel:
               </div>
             </TabsContent>
           </Tabs>
+        )}
+
+        {/* per-prefix drill-down modal — reachable from route rows + RIB log */}
+        {state && (
+          <PrefixDrilldown state={state} prefix={drillPrefix} onClose={() => setDrillPrefix(null)} />
         )}
       </main>
 

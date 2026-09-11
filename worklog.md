@@ -316,3 +316,53 @@ Unresolved issues / risks:
 - Concurrent cron reviewer still resets/injects every ~15 min (environmental; resets clear route-table expansion state mid-inspection)
 - agent-browser `find role tab click "ANALYTICS"` mis-resolves to CONTROL ROOM (CLI locator quirk) — use keyboard press 1-5 or coordinate mouse clicks
 - Next-phase candidates: per-prefix drill-down page with full history replay, copilot streaming table progressive render, topology edge-label overlays for active hijack paths, exportable PDF run reports, ablation comparison mode (side-by-side A0 vs A4 runs)
+
+---
+Task ID: 14
+Agent: main
+Task: QA round + engine restart + mandatory feature round (prefix drill-down forensics, topology hijack-path overlay, live attack phase UI) + styling polish + full verification
+
+Work Log:
+- Read worklog (13 prior rounds) and assessed service state: Next.js 3000 alive, bgp-sim engine 3010 DOWN (no process, connection refused)
+- Engine restart: `cd mini-services/bgp-sim && nohup bun run dev > /tmp/bgp-sim.log 2>&1 &` — clean single process (bun --hot index.ts PID 1243) listening on 3010, socket.io handshake OK; gateway :81 healthy
+- QA baseline via agent-browser through gateway :81 (worklog learnings applied: keyboard 1-5 for tabs, not find role tab):
+  - All 5 tabs render, 0 console errors; S2 full lifecycle (inject → detect trust 0.32 MTTD 5s → quarantine → RIB verify → MTTM 10s → withdraw); 69 records in SQLite; APIs 200; mobile 390px no overflow; scroll integrity (11 samples all 0)
+  - No bugs found at baseline → proceeded to mandatory feature round
+- NEW FEATURE 1: Per-Prefix Drill-Down modal (src/components/bgp/prefix-drilldown.tsx, ~470 lines)
+  - Trigger: ⌖ Crosshair button on every route row (min-w-11 touch target, hover emerald) + clickable prefix cells in RIB log (dotted-underline hover)
+  - Sections: KPI strip (path/origin/age/ML verdict) · trust composition τ = Σ wᵢ·tᵢ with per-indicator bars + violet weight markers + contribution values · full-width recharts trust trajectory (gradient area + 3 threshold ReferenceLines, 190px) · attack run lifecycle timeline (phase-colored bands injected/detected/mitigated/rolledback + ▲▼● time markers + MTTD/MTTM/policy) · per-prefix event stream (40 newest) · RIB commit audit table · live 10-feature vector
+  - Run→prefix matching: S-scenarios via ATTACK_SCENARIOS prefix; custom CX runs linked via injection event timestamp (event t === run.injectedAt, verified live: run #6 · CX appeared in 203.0.113.0/24 drilldown)
+  - Historical evidence still renders after route leaves RIB (graceful "route no longer in RIB" notice)
+  - Radix Dialog: Escape closes, sticky blurred header, max-h 88vh scrollable, live-updating while attack runs
+- NEW FEATURE 2: Topology hijack-path overlay (topology-graph.tsx + page.tsx)
+  - page.tsx derives attackPath from activeRun: scenario prefix lookup for S1-S6, anomalous-route fallback for CX; phases injected/detected/mitigated only; asPath parsed to ASN list
+  - Rendering: curved bezier segments (16px perpendicular offset off real edges) from ORIGIN toward defender, edge-glow filter; marching-ants .attack-flow CSS (dash-march keyframes, prefers-reduced-motion disables); attack packet dots animateMotion per segment (staggered); origin chip (scenario · prefix); red dashed rings on all path ASes; blocked ✕ marker (pulsing circle + X) on defender-entry segment when mitigated
+  - Legend extended: "attack flow" + "✕ blocked" entries
+- NEW FEATURE 3: Attack panel live phase UI (attack-panel.tsx + page.tsx props)
+  - LIVE_PHASE map: injected "propagating through testbed…" amber → detected orange → mitigated "quarantined · LP 0 + no-export" red → rolledback emerald
+  - t+Xs elapsed + "withdraw in Ys" countdown (S-scenarios; CX shows indeterminate pulse bar) + gradient lifecycle progress bar with role=progressbar
+- NEW FEATURE 4: Event log freshness chip — "· last Ns ago" (sim seconds since newest event, tabular-nums)
+- Styling polish (mandatory):
+  - Route rows: hostile prefix glow (red drop-shadow on hijack/leak), restructured flex row (expand button + focus button siblings — no nested buttons, valid HTML), ⌖ hint in table header
+  - RIB log: clickable prefix buttons; drilldown modal NOC styling (gradient header, section headers with icons, tier-colored bars, zebra tables)
+  - globals.css: dash-march keyframes + .attack-flow + reduced-motion guards
+  - ARCHITECTURE tab: 2 new Operator Tooling cards documenting the features
+- Verification (all passed):
+  - lint clean (exit 0); dev.log shows compile OK + SQLite run persistence INSERTs; engine alive (handshake 200)
+  - S1/S2/S4/S5 + custom CX attacks: overlay renders both animated (activeFlows in SVG = 1) and blocked (3 Q-paths + 4 rings + X + chip "S1 · 192.0.2.0/24") states
+  - Drilldown: all 7 sections present, 15 event rows, 1 recharts line + 3 refLines, Escape closes reliably, works during live attack (phase bands + MTTD 5s visible), RIB-log click-through opens correct prefix
+  - 0 console errors throughout; mobile 390px modal fits (390px wide, no overflow); tab cycle 5 tabs; scroll never hijacked
+- VLM screenshot verification unavailable this session (CLI/SDK 401 "missing X-Token header") — used precise DOM-geometry checks instead (path d attributes, element counts, class presence); screenshots saved to /home/z/my-project/download/qa-round14-*.png (9 files)
+
+Stage Summary:
+- bgp-sim engine restarted and stable; app baseline was bug-free this round
+- 2 headline features shipped: per-prefix forensics modal (trust decomposition + trajectory + lifecycle + event/RIB audit) and topology attack-path overlay (animated propagation → blocked quarantine states)
+- 2 supporting features: live attack phase indicator with countdown progress bar, event-log freshness chip
+- Custom (CX) attacks fully integrated into both features via event-timestamp run linking
+
+Unresolved issues / risks:
+- VLM token expired/unavailable (401) — re-verify visuals next session if token restored; DOM checks + 9 screenshots archived meanwhile
+- Turbopack dev server long-uptime OOM risk remains (see round 12 recovery notes: setsid /tmp/start-dev.sh &)
+- Concurrent cron reviewer still resets the engine every ~15 min (cleared run history mid-test once — environmental; drilldown lifecycle correctly degrades to event/RIB evidence only)
+- CX run lifecycle linking depends on the injection event remaining in the engine's rolling event buffer — if it ages out, the run band disappears (graceful, evidence sections remain)
+- Next-phase candidates: copilot streaming table progressive render, ablation A/B side-by-side comparator (A0 vs A4 same-scenario), exportable PDF run reports, per-prefix deep-link URL params, GIF/video replay export, light theme (if requested)

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ATTACK_SCENARIOS, CustomAttackSpec } from '@/lib/bgp-sim/types';
+import { ATTACK_SCENARIOS, CustomAttackSpec, RunPhase } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,10 +13,23 @@ import { AlertTriangle, Crosshair, History, Undo2, Zap } from 'lucide-react';
 
 interface Props {
   activeScenarioId: string | null;
+  activePhase?: RunPhase | null;
+  activeElapsedSec?: number;
+  activeRemainingSec?: number | null;
   onInject: (scenarioId: string, durationSec?: number) => void;
   onWithdraw: () => void;
   onCustom: (spec: CustomAttackSpec) => void;
 }
+
+/** live phase wording for the active scenario card */
+const LIVE_PHASE: Record<RunPhase, { label: string; tone: string; bar: string }> = {
+  idle: { label: 'idle', tone: 'text-slate-500', bar: 'bg-slate-700' },
+  injected: { label: 'propagating through testbed…', tone: 'text-amber-300', bar: 'bg-gradient-to-r from-amber-500 to-orange-500' },
+  detected: { label: 'detected — policy engaging…', tone: 'text-orange-300', bar: 'bg-gradient-to-r from-orange-500 to-red-500' },
+  mitigated: { label: 'quarantined · LP 0 + no-export', tone: 'text-red-300', bar: 'bg-red-600' },
+  rolledback: { label: 'rolled back — trust restored', tone: 'text-emerald-300', bar: 'bg-emerald-600' },
+  failed: { label: 'mitigation failed', tone: 'text-red-400', bar: 'bg-red-800' },
+};
 
 const CLASS_TONE: Record<number, string> = {
   3: 'text-red-400 border-red-900 bg-red-950/40',
@@ -48,7 +61,7 @@ function SeverityMeter({ level, seg, label }: { level: number; seg: string; labe
   );
 }
 
-export function AttackPanel({ activeScenarioId, onInject, onWithdraw, onCustom }: Props) {
+export function AttackPanel({ activeScenarioId, activePhase, activeElapsedSec = 0, activeRemainingSec = null, onInject, onWithdraw, onCustom }: Props) {
   const [prefix, setPrefix] = useState('203.0.113.0/24');
   const [originAs, setOriginAs] = useState('65010');
   const [asPath, setAsPath] = useState('65001 65002 65006 65010');
@@ -136,9 +149,27 @@ export function AttackPanel({ activeScenarioId, onInject, onWithdraw, onCustom }
                       <span className="truncate" title="attacker vantage">AS{s.attackerNode}</span>
                     </div>
                     {active && (
-                      <div className="mt-1.5 flex items-center gap-1 text-[10px] font-mono text-red-400">
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                        attack in progress…
+                      <div className="mt-1.5 space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+                          <span className={`flex items-center gap-1.5 ${LIVE_PHASE[activePhase ?? 'injected'].tone}`}>
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                            {LIVE_PHASE[activePhase ?? 'injected'].label}
+                          </span>
+                          <span className="text-slate-500 tabular-nums shrink-0">
+                            t+{activeElapsedSec}s{activeRemainingSec !== null && activeRemainingSec > 0 ? ` · withdraw in ${activeRemainingSec}s` : ''}
+                          </span>
+                        </div>
+                        {/* lifecycle progress: elapsed vs auto-withdraw window */}
+                        <div className="h-1 rounded bg-slate-800/80 overflow-hidden" role="progressbar" aria-label="attack elapsed time">
+                          {activeRemainingSec !== null ? (
+                            <div
+                              className={`h-full rounded transition-all duration-700 ${LIVE_PHASE[activePhase ?? 'injected'].bar}`}
+                              style={{ width: `${Math.min(100, Math.max(3, (activeElapsedSec / Math.max(activeElapsedSec + activeRemainingSec, 1)) * 100))}%` }}
+                            />
+                          ) : (
+                            <div className="h-full w-full rounded opacity-40 animate-pulse bg-red-900" />
+                          )}
+                        </div>
                       </div>
                     )}
                   </button>

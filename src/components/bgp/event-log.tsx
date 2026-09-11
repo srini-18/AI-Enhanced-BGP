@@ -26,7 +26,7 @@ const SOURCE_STYLE: Record<string, string> = {
 /** Sources worth their own quick-filter chip (pipeline-critical feeds). */
 const FILTER_SOURCES = ['attack', 'detection', 'policy', 'shadow', 'rollback'] as const;
 
-export function EventLog({ events }: { events: SimEvent[] }) {
+export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?: number }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const [active, setActive] = useState<Set<string>>(new Set());
@@ -73,6 +73,11 @@ export function EventLog({ events }: { events: SimEvent[] }) {
         <span className="text-[9px] font-mono text-slate-600">
           {visible.length}/{events.length}
         </span>
+        {simTime > 0 && events.length > 0 && (
+          <span className="text-[9px] font-mono text-slate-600 tabular-nums" title="sim seconds since the newest event">
+            · last {Math.max(0, Math.round(simTime - events[events.length - 1].t))}s ago
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-1" role="group" aria-label="event source filter">
           {FILTER_SOURCES.map((src) => {
             const on = active.has(src);

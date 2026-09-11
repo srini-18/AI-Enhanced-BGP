@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { FEATURE_NAMES, RouteSnapshot, SimState, TrustPoint } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck, TrendingDown } from 'lucide-react';
+import { ChevronDown, ChevronRight, Crosshair, ShieldAlert, ShieldCheck, TrendingDown } from 'lucide-react';
 import { TrustSparkline } from './trust-sparkline';
 
 const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
@@ -46,7 +46,7 @@ function FeatureRow({ name, value }: { name: string; value: number }) {
   );
 }
 
-export function RouteTable({ state }: { state: SimState }) {
+export function RouteTable({ state, onFocusPrefix }: { state: SimState; onFocusPrefix?: (prefix: string) => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const routes = Object.values(state.routes);
 
@@ -71,6 +71,7 @@ export function RouteTable({ state }: { state: SimState }) {
               simTime={state.simTime}
               trustHistory={state.trustHistory.filter((p) => p.prefix === r.route.prefix)}
               thresholds={state.config.policy.thresholds}
+              onFocus={onFocusPrefix ? () => onFocusPrefix(r.route.prefix) : undefined}
             />
           );
         })}
@@ -91,6 +92,7 @@ function RouteRow({
   simTime,
   trustHistory,
   thresholds,
+  onFocus,
 }: {
   r: RouteSnapshot;
   st: { badge: string; dot: string; label: string };
@@ -102,11 +104,13 @@ function RouteRow({
   simTime: number;
   trustHistory: TrustPoint[];
   thresholds: { normal: number; suspicious: number; leak: number };
+  onFocus?: () => void;
 }) {
   const flashKey = `${r.status}:${r.route.locPref}`;
+  const hostile = r.status === 'hijack' || r.status === 'leak';
   return (
             <div
-              className={`relative rounded-lg border transition-colors ${
+              className={`group relative rounded-lg border transition-colors ${
                 quarantined
                   ? 'border-red-800/70 bg-red-950/20'
                   : r.underOverride
@@ -115,14 +119,20 @@ function RouteRow({
               }`}
             >
               <div key={flashKey} className="pointer-events-none absolute inset-0 rounded-lg status-flash" aria-hidden />
-              <button
-                className="w-full text-left p-3"
-                onClick={onToggle}
-                aria-expanded={isOpen}
-              >
+              <div className="flex items-stretch">
+                <button
+                  className="flex-1 min-w-0 text-left p-3"
+                  onClick={onToggle}
+                  aria-expanded={isOpen}
+                  aria-label={`${r.route.prefix} — expand diagnostics`}
+                >
                 <div className="flex items-center gap-2 flex-wrap">
                   {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-500" />}
-                  <span className="font-mono text-sm font-semibold text-slate-100">{r.route.prefix}</span>
+                  <span
+                    className={`font-mono text-sm font-semibold text-slate-100 ${hostile ? 'text-red-200 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]' : ''}`}
+                  >
+                    {r.route.prefix}
+                  </span>
                   <Badge variant="outline" className={`text-[9px] h-4.5 px-1.5 ${st.badge}`}>
                     <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${st.dot} ${r.status !== 'normal' ? 'animate-pulse' : ''}`} />
                     {st.label}
@@ -167,7 +177,21 @@ function RouteRow({
                     <span className="truncate">{r.policyAction}</span>
                   </div>
                 )}
-              </button>
+                </button>
+                {onFocus && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFocus();
+                    }}
+                    title="open prefix drill-down — full history, trust decomposition, RIB audit"
+                    aria-label={`drill down into ${r.route.prefix}`}
+                    className="shrink-0 min-w-11 px-2.5 flex items-center justify-center text-slate-600 hover:text-emerald-300 hover:bg-emerald-950/30 rounded-r-lg transition-colors focus-visible:ring-1 focus-visible:ring-emerald-600 outline-none"
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
 
               {isOpen && (
                 <div className="px-3 pb-3 space-y-3 border-t border-slate-800 pt-2">

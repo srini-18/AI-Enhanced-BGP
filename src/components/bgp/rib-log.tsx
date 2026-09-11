@@ -12,7 +12,7 @@ function lpTone(lp: number, cfgNormal: number) {
   return 'text-red-400';
 }
 
-export function RibLogViewer({ state }: { state: SimState }) {
+export function RibLogViewer({ state, onFocusPrefix }: { state: SimState; onFocusPrefix?: (prefix: string) => void }) {
   const [open, setOpen] = useState(false);
   const entries = state.ribLog;
   const normalLp = state.config.policy.lpNormal;
@@ -92,7 +92,19 @@ export function RibLogViewer({ state }: { state: SimState }) {
                   {entries.map((e: RibLogEntry) => (
                     <tr key={e.id} className={`border-b border-slate-900/60 ${e.outcome === 'failed' ? 'bg-red-950/10' : ''}`}>
                       <td className="py-1.5 px-2 text-slate-500">{e.t}s</td>
-                      <td className="py-1.5 px-2 text-slate-300">{e.prefix}</td>
+                      <td className="py-1.5 px-2 text-slate-300">
+                        {onFocusPrefix ? (
+                          <button
+                            onClick={() => onFocusPrefix(e.prefix)}
+                            className="font-mono hover:text-emerald-300 hover:underline decoration-dotted underline-offset-2 transition-colors"
+                            title={`drill down into ${e.prefix}`}
+                          >
+                            {e.prefix}
+                          </button>
+                        ) : (
+                          e.prefix
+                        )}
+                      </td>
                       <td className={`py-1.5 px-2 text-center font-bold ${lpTone(e.lp, normalLp)}`}>{e.lp}</td>
                       <td className="py-1.5 px-2 text-violet-300">{e.community ?? '—'}</td>
                       <td className="py-1.5 px-2 text-center">

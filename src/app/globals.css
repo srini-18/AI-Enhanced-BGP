@@ -300,13 +300,26 @@ input[type='range'].scrub-range::-moz-range-thumb {
   cursor: pointer;
 }
 
+/* ---------- topology hijack overlay: marching-ants red flow ---------- */
+@keyframes dash-march {
+  to { stroke-dashoffset: -18; }
+}
+.attack-flow {
+  stroke-dasharray: 10 8;
+  animation: dash-march 1.1s linear infinite;
+}
+
 /* ---------- reduced motion: disable decorative animations ---------- */
 @media (prefers-reduced-motion: reduce) {
   .glow-dot,
   .stream-cursor,
   .msg-appear,
   .scrub-ping,
-  .status-flash {
+  .status-flash,
+  .attack-flow {
     animation: none;
+  }
+  .attack-flow {
+    stroke-dasharray: none;
   }
 }
