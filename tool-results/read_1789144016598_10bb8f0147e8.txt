@@ -317,3 +317,191 @@
    317→- agent-browser `find role tab click "ANALYTICS"` mis-resolves to CONTROL ROOM (CLI locator quirk) — use keyboard press 1-5 or coordinate mouse clicks
    318→- Next-phase candidates: per-prefix drill-down page with full history replay, copilot streaming table progressive render, topology edge-label overlays for active hijack paths, exportable PDF run reports, ablation comparison mode (side-by-side A0 vs A4 runs)
    319→
+   320→---
+   321→Task ID: 14
+   322→Agent: main
+   323→Task: QA round + engine restart + mandatory feature round (prefix drill-down forensics, topology hijack-path overlay, live attack phase UI) + styling polish + full verification
+   324→
+   325→Work Log:
+   326→- Read worklog (13 prior rounds) and assessed service state: Next.js 3000 alive, bgp-sim engine 3010 DOWN (no process, connection refused)
+   327→- Engine restart: `cd mini-services/bgp-sim && nohup bun run dev > /tmp/bgp-sim.log 2>&1 &` — clean single process (bun --hot index.ts PID 1243) listening on 3010, socket.io handshake OK; gateway :81 healthy
+   328→- QA baseline via agent-browser through gateway :81 (worklog learnings applied: keyboard 1-5 for tabs, not find role tab):
+   329→  - All 5 tabs render, 0 console errors; S2 full lifecycle (inject → detect trust 0.32 MTTD 5s → quarantine → RIB verify → MTTM 10s → withdraw); 69 records in SQLite; APIs 200; mobile 390px no overflow; scroll integrity (11 samples all 0)
+   330→  - No bugs found at baseline → proceeded to mandatory feature round
+   331→- NEW FEATURE 1: Per-Prefix Drill-Down modal (src/components/bgp/prefix-drilldown.tsx, ~470 lines)
+   332→  - Trigger: ⌖ Crosshair button on every route row (min-w-11 touch target, hover emerald) + clickable prefix cells in RIB log (dotted-underline hover)
+   333→  - Sections: KPI strip (path/origin/age/ML verdict) · trust composition τ = Σ wᵢ·tᵢ with per-indicator bars + violet weight markers + contribution values · full-width recharts trust trajectory (gradient area + 3 threshold ReferenceLines, 190px) · attack run lifecycle timeline (phase-colored bands injected/detected/mitigated/rolledback + ▲▼● time markers + MTTD/MTTM/policy) · per-prefix event stream (40 newest) · RIB commit audit table · live 10-feature vector
+   334→  - Run→prefix matching: S-scenarios via ATTACK_SCENARIOS prefix; custom CX runs linked via injection event timestamp (event t === run.injectedAt, verified live: run #6 · CX appeared in 203.0.113.0/24 drilldown)
+   335→  - Historical evidence still renders after route leaves RIB (graceful "route no longer in RIB" notice)
+   336→  - Radix Dialog: Escape closes, sticky blurred header, max-h 88vh scrollable, live-updating while attack runs
+   337→- NEW FEATURE 2: Topology hijack-path overlay (topology-graph.tsx + page.tsx)
+   338→  - page.tsx derives attackPath from activeRun: scenario prefix lookup for S1-S6, anomalous-route fallback for CX; phases injected/detected/mitigated only; asPath parsed to ASN list
+   339→  - Rendering: curved bezier segments (16px perpendicular offset off real edges) from ORIGIN toward defender, edge-glow filter; marching-ants .attack-flow CSS (dash-march keyframes, prefers-reduced-motion disables); attack packet dots animateMotion per segment (staggered); origin chip (scenario · prefix); red dashed rings on all path ASes; blocked ✕ marker (pulsing circle + X) on defender-entry segment when mitigated
+   340→  - Legend extended: "attack flow" + "✕ blocked" entries
+   341→- NEW FEATURE 3: Attack panel live phase UI (attack-panel.tsx + page.tsx props)
+   342→  - LIVE_PHASE map: injected "propagating through testbed…" amber → detected orange → mitigated "quarantined · LP 0 + no-export" red → rolledback emerald
+   343→  - t+Xs elapsed + "withdraw in Ys" countdown (S-scenarios; CX shows indeterminate pulse bar) + gradient lifecycle progress bar with role=progressbar
+   344→- NEW FEATURE 4: Event log freshness chip — "· last Ns ago" (sim seconds since newest event, tabular-nums)
+   345→- Styling polish (mandatory):
+   346→  - Route rows: hostile prefix glow (red drop-shadow on hijack/leak), restructured flex row (expand button + focus button siblings — no nested buttons, valid HTML), ⌖ hint in table header
+   347→  - RIB log: clickable prefix buttons; drilldown modal NOC styling (gradient header, section headers with icons, tier-colored bars, zebra tables)
+   348→  - globals.css: dash-march keyframes + .attack-flow + reduced-motion guards
+   349→  - ARCHITECTURE tab: 2 new Operator Tooling cards documenting the features
+   350→- Verification (all passed):
+   351→  - lint clean (exit 0); dev.log shows compile OK + SQLite run persistence INSERTs; engine alive (handshake 200)
+   352→  - S1/S2/S4/S5 + custom CX attacks: overlay renders both animated (activeFlows in SVG = 1) and blocked (3 Q-paths + 4 rings + X + chip "S1 · 192.0.2.0/24") states
+   353→  - Drilldown: all 7 sections present, 15 event rows, 1 recharts line + 3 refLines, Escape closes reliably, works during live attack (phase bands + MTTD 5s visible), RIB-log click-through opens correct prefix
+   354→  - 0 console errors throughout; mobile 390px modal fits (390px wide, no overflow); tab cycle 5 tabs; scroll never hijacked
+   355→- VLM screenshot verification unavailable this session (CLI/SDK 401 "missing X-Token header") — used precise DOM-geometry checks instead (path d attributes, element counts, class presence); screenshots saved to /home/z/my-project/download/qa-round14-*.png (9 files)
+   356→
+   357→Stage Summary:
+   358→- bgp-sim engine restarted and stable; app baseline was bug-free this round
+   359→- 2 headline features shipped: per-prefix forensics modal (trust decomposition + trajectory + lifecycle + event/RIB audit) and topology attack-path overlay (animated propagation → blocked quarantine states)
+   360→- 2 supporting features: live attack phase indicator with countdown progress bar, event-log freshness chip
+   361→- Custom (CX) attacks fully integrated into both features via event-timestamp run linking
+   362→
+   363→Unresolved issues / risks:
+   364→- VLM token expired/unavailable (401) — re-verify visuals next session if token restored; DOM checks + 9 screenshots archived meanwhile
+   365→- Turbopack dev server long-uptime OOM risk remains (see round 12 recovery notes: setsid /tmp/start-dev.sh &)
+   366→- Concurrent cron reviewer still resets the engine every ~15 min (cleared run history mid-test once — environmental; drilldown lifecycle correctly degrades to event/RIB evidence only)
+   367→- CX run lifecycle linking depends on the injection event remaining in the engine's rolling event buffer — if it ages out, the run band disappears (graceful, evidence sections remain)
+   368→- Next-phase candidates: copilot streaming table progressive render, ablation A/B side-by-side comparator (A0 vs A4 same-scenario), exportable PDF run reports, per-prefix deep-link URL params, GIF/video replay export, light theme (if requested)
+   369→
+   370→---
+   371→Task ID: 15
+   372→Agent: main
+   373→Task: QA round + mandatory feature round (Ablation A/B Laboratory with page-level state machine, Variant Performance archive panel) + styling polish + full verification
+   374→
+   375→Work Log:
+   376→- Read worklog (14 prior rounds); both services alive at start (3000 + 3010 handshake 200); next-server RSS 1.42GB monitored all round (OOM risk noted; finished at ~2.7GB system-wide with 1.3GB available — no restart needed)
+   377→- QA baseline via agent-browser through gateway :81: all 5 tabs render, round-14 features intact (attack overlay, drill-down modal all 7 sections, live phase UI, event freshness chip), 12 analytics charts, 0 console errors, mobile 390px no overflow — baseline clean → mandatory feature round
+   378→- NEW FEATURE 1: Ablation A/B Laboratory (src/components/bgp/ablation-lab.tsx — useAblationExperiment hook + AblationLab view, ~590 lines)
+   379→  - Controlled experiment from the paper: pick scenario (S1-S6) + two variants (A0-A4) → applies variant A preset, injects, waits for the run to land in history, then arms variant B, injects again, then restores the operator's original config
+   380→  - Run landing detection: snapshot of history runKeys (runId:injectedAt) before injection — new entry with matching scenarioId = terminal; survives engine resets (history-shrink → re-arm current side)
+   381→  - Config restore: full SimConfig snapshot at start; preset-labeled originals ('A4 preset' / 'A4 · Full System') restore via applyPreset (regex /^A([0-4])(?:\s+preset|\s+·)/), custom configs via setConfig deepMerge (values exact; label truthfully 'custom'); ConfigDiff confirms 'matches A4 baseline' after every experiment
+   382→  - Side-by-side result cards: outcome badge (undetected / mitigated / rolled back / timeout), detection (MTTD + class) vs 'never detected', mitigation (MSR ✓ + MTTM), policy, RIB verified, dwell, run ref; ★ wins glow (emerald shadow ring) on the better variant; violet verdict strip auto-composes the narrative ('A0 never detected it while A4 detected it — time-to-detect 5s vs ∞')
+   383→  - Two-segment progress bar (A amber / B violet), ABORT, 150s per-arm timeout watchdog with re-inject grace
+   384→- CRITICAL ARCHITECTURE FIX (found during QA): first implementation lived inside BenchmarkPanel → Radix Tabs UNMOUNTS inactive TabsContent, so switching tabs mid-experiment killed the state machine (no arm-B, no config restore — engine left on variant B) and results vanished. Refactored: state machine hoisted to useAblationExperiment at PAGE level (survives tab switches), AblationLab is a pure view + local selector state. VERIFIED: switched to Control Room mid-run, experiment continued (advanced to variant B), completed with results + config restored after returning
+   385→- NEW FEATURE 2: Variant Performance · Run Archive (src/components/bgp/variant-performance.tsx, Analytics tab above trust chart)
+   386→  - Aggregates ALL persisted runs from /api/sim-runs (SQLite) by variantLabel: runs, scenario coverage chips, detection-rate + MSR bars (tone-scaled), avg MTTD/MTTM — the long-horizon ablation story that survives engine resets; manual reload button; live: 74 runs · 3 variants (A4 · Full System 38 runs 82%/84% 5.0s/16.1s, A4 preset 20 runs 100%/100%, custom 16 runs 94%/100%)
+   387→- NEW FEATURE 3 (supporting): BENCHMARK tab trigger shows a violet pulsing 'A/B' badge while an experiment is running (run-count badge swaps out) — operators on other tabs see the active experiment
+   388→- Styling polish (mandatory): winner glow ring on result cards, two-segment gradient progress, tone-mapped variant rows (A0 slate → A4 emerald) with run-volume bars, scenario coverage chips, column header grid, verdict strip, responsive 2-col → 6-col stat grid, disabled-state selector chips during runs
+   389→- Verification (all passed):
+   390→  - lint clean (exit 0) after every stage
+   391→  - E2E experiment ×3 (A0 vs A4 S2 ×2, default A0/A4): all completed with correct verdicts, runs #10 (failed/undetected) + #11 (mitigated 5s/10s) visible in Run History; tab-switch survival proven; config restored to 'matches A4 baseline' every time; engine preset label transitions observed (A0 preset → A4)
+   392→  - Variant Performance panel: 74 runs / 3 variants rendered with bars + stats; reload works
+   393→  - 0 console errors throughout; mobile 390px no overflow (Control Room + Benchmark tabs); A/B tab badge visible while running; SQLite INSERT/SELECT flows confirmed in dev.log; engine handshake 200 at end
+   394→  - 6 screenshots archived to /home/z/my-project/download/qa-round15-*.png
+   395→
+   396→Stage Summary:
+   397→- Ablation A/B Laboratory shipped with page-level state machine (the paper's core experiment now one click: A0 vs A4 same scenario, side-by-side forensics)
+   398→- Variant Performance archive panel turns 74 accumulated SQLite runs into per-variant ablation analytics
+   399→- Critical tab-unmount architecture bug caught and fixed during QA (experiment now survives tab switches — verified live)
+   400→- BENCHMARK tab gains live A/B experiment badge
+   401→
+   402→Unresolved issues / risks:
+   403→- A/B experiment foreign-run capture: if the concurrent cron reviewer injects the SAME scenarioId mid-experiment, its run could be misattributed (low probability, same shape — accepted)
+   404→- Custom-config restore leaves variantLabel 'custom' (values exact via deepMerge; ConfigDiff still confirms baseline) — cosmetic only
+   405→- Turbopack next-server memory at ~1.4GB RSS after long uptime — OOM recovery recipe in round 12 notes (setsid /tmp/start-dev.sh &)
+   406→- A0 arm takes ~25s real (undetected until auto-withdraw); full A/B experiment ~60-90s real — consider a 'fast mode' (shorter durationSec injection) next round if operators want quicker iteration
+   407→- VLM token still unavailable (401) — DOM-geometry checks used instead
+   408→- Next-phase candidates: A/B fast mode, copilot streaming table progressive render, exportable PDF run reports (HTML report exists), per-prefix deep-link URL params, GIF/video replay export, scenario randomizer for soak testing, light theme (if requested)
+   409→
+   410→---
+   411→Task ID: 16
+   412→Agent: main
+   413→Task: QA baseline round + mandatory feature round (A/B fast modes, Chaos Drill soak test, per-prefix forensic report export) + styling polish + full verification
+   414→
+   415→Work Log:
+   416→- Read worklog (15 prior rounds); both services alive at start (Next 3000 + engine 3010 handshake 200; single bun --hot PID 1243). The "port 3010 in use" error in /tmp/bgp-sim.log was from a duplicate-start attempt — live process is healthy
+   417→- Baseline QA via agent-browser (fresh browser session after learning console buffer accumulates stale errors):
+   418→  - All 5 tabs render, socket LINK, clock ticking, S2 lifecycle verified (run #14: MTTD 5s, MTTM 15s, MSR ✓, RIB verified, persisted to SQLite with 4-defense comparison), Analytics 12 charts + radar + time-travel + Variant Performance (81 runs · 4 variants), Benchmark A/B lab, Copilot renders with live ctx
+   419→  - Lint clean (exit 0); mobile 390px no overflow; 0 console errors on FRESH browser session (two "Parsing ecmascript source code failed" errors in the buffer were historical mid-write artifacts from previous sessions — verified current files compile clean; key QA learning: restart the browser (agent-browser close + open) to clear the persistent console buffer before trusting error counts)
+   420→  - Baseline clean → mandatory feature round (3 new features)
+   421→- NEW FEATURE 1: A/B Laboratory fast modes (ablation-lab.tsx)
+   422→  - LAB_SPEEDS: 1× paper (default durations, 150s timeout) / 2× fast (60s injection, 90s timeout) / 4× turbo (45s injection, 70s timeout) — radiogroup speed selector (cyan), speed hint strip with Gauge icon; experiment.start() takes speed; onInject now passes durationSec (engine's attack:inject already supported it); ARM_TIMEOUT_MS replaced by per-speed armTimeoutMs
+   423→  - VERIFIED LIVE: turbo A0 vs A4 S2 completed in ~35s real (was 60-90s) — A0 undetected (run #15) vs A4 mitigated MTTD 5s/MTTM 10s RIB ✓ (run #16), ★ wins glow, verdict "time-to-detect 5s vs ∞", config restored to "matches A4 baseline"
+   424→- NEW FEATURE 2: Chaos Drill · Soak Test (src/components/bgp/chaos-drill.tsx, ~510 lines — useChaosDrill hook + ChaosDrill view)
+   425→  - Page-level state machine (survives tab switches like ablation): randomized scenario sequence (mixed S1-S6 / hijacks S1,S2,S4 / leak pools S5,S6), no immediate repeats, random 45-80s injection durations, run-landing detection via baseline-key snapshot, engine-reset re-arm, 100s round timeout, 6-round default (4/6/10/14 selector)
+   426→  - UI: FIRE DRILL amber button, progress bar + round k/N status, per-round outcome chips (tone-colored), 6-KPI summary (rounds/detection/MSR/avg MTTD/avg MTTM/worst MTTD), per-round detail table with policy + run ref (sticky header, zebra), BENCHMARK tab shows amber CHAOS k/N badge while running
+   427→  - VERIFIED LIVE: 6-round mixed drill completed (~95s real): S4→S2→S6→S2→S3→S5, all runs landed + persisted (#17-#22); summary detection 100%, MSR 100%, avg MTTD 7.5s, worst MTTD 20s (S3); tab badge live; tab-switch survival proven (switched to Control Room mid-drill, drill continued); S3 'failed' phase with MSR ✓ is correct engine semantics (rollback streak reset by flapping → 240s timeout, mitigation+RIB completed)
+   428→  - Calibrated round-time estimate after live measurement (6 rounds ≈ 1-2 min)
+   429→- NEW FEATURE 3: Per-prefix forensic report export (report.ts + prefix-drilldown.tsx)
+   430→  - buildForensicReportHtml/downloadForensicReport in report.ts: standalone dark NOC HTML — header (run/scenario/phase pill/export stamp), 8 KPI cards (MTTD/MTTM/dwell/MSR/RIB/τ-final/policy/sample counts), 4-defense comparison, inline-SVG trust trajectory (tier threshold lines, min marker, last-point marker, gradient area), lifecycle timeline SVG (phase-colored bands + time markers), 10-feature vector table, prefix event timeline (60 max), RIB commit audit
+   431→  - Export button in drilldown modal header (FileDown icon, emerald, disabled without evidence); newest run auto-selected via injectedAt reduce
+   432→  - VERIFIED LIVE: export from 192.0.2.0/24 drilldown produced bgp-forensic-192-0-2-0-24-*.html (16KB live / 11KB sample); content check passed all 9 section assertions; anchor-click capture confirmed download; sample artifact at download/sample-forensic-report.html renders standalone (6 h2 sections, 2 SVGs, 8 KPIs)
+   433→- Styling polish (mandatory):
+   434→  - globals.css: noc-grid-bg upgraded to two-scale grid (28px fine + 140px major) + emerald radial vignette; .panel-accent emerald hairline top; .zebra-rows table striping + hover; .kbd-hint chips; .clock-glow text-shadow; reduced-motion guards extended
+   435→  - page.tsx: clock glow + font-semibold; emerald gradient hairline under header; footer redesigned — 8 pipeline stage chips (rollback highlighted emerald) + kbd-hint shortcut chips (space/R/?) + RFC line; topology card panel-accent
+   436→  - benchmark.tsx: 4-way matrix + run history + SQLite archive tables zebra-rows; matrix panel-accent
+   437→  - ARCHITECTURE tab: 3 new Operator Tooling cards (A/B fast modes, Chaos drill, Forensic export)
+   438→- Verification (all passed):
+   439→  - lint clean (exit 0) after every stage; dev.log no errors; both services alive at end (3000 + 3010 handshake 200)
+   440→  - E2E: turbo A/B (results + restore), 6-round chaos drill (KPIs + persistence), forensic export (content + download + standalone render)
+   441→  - Fresh browser session: 0 console errors; mobile 390px no overflow (both Control Room + Benchmark); panel stacking geometry verified (A/B 226px above chaos 179px, no overlap); styling classes present in DOM (gridBg radial, panelAccent, zebraRows ×3, clockGlow, hairlines ×2)
+   442→  - 4 screenshots archived: qa-round16-{control,benchmark-chaos,mobile,forensic-report}.png
+   443→- VLM attempted per skill instructions — still failing (SDK vision request error, same as rounds 14/15); DOM-geometry + content assertions used instead
+   444→
+   445→Stage Summary:
+   446→- 3 new features shipped: A/B fast modes (turbo experiment ~35s), Chaos Drill randomized soak testing (page-level state machine, live KPIs), per-prefix forensic HTML export (standalone report with inline SVG charts)
+   447→- Styling: two-scale NOC grid + vignette background, emerald hairlines (header/footer/panels), zebra tables, kbd-hint chips, clock glow, richer footer, 3 new docs cards
+   448→- Baseline was bug-free this round (fresh-session console methodology established)
+   449→
+   450→Unresolved issues / risks:
+   451→- agent-browser console buffer persists across navigations within a session — stale historical errors mislead QA; ALWAYS restart browser (close + open) before counting errors
+   452→- VLM token still unavailable (3rd consecutive round) — retry next session
+   453→- Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
+   454→- Chaos drill results are client-state (reset on reload — runs persist in engine history/SQLite; by design)
+   455→- Chaos/A-B foreign-run misaturation risk if the 15-min cron reviewer injects the SAME scenarioId mid-experiment (accepted, same shape as round 15)
+   456→- Next-phase candidates: copilot streaming table progressive render, PDF export of forensic reports (print stylesheet exists — window.print flow), per-prefix deep-link URL params, GIF/video replay export, chaos drill preset randomizer (also randomize config knobs between rounds), light theme (if requested)
+   457→
+   458→---
+   459→Task ID: 17
+   460→Agent: main
+   461→Task: QA baseline round + mandatory feature round (deep-link URLs, live RIB filter/sort, event grep, expanded shortcuts) + styling polish (status edges, match highlighting, posture strip) + full verification
+   462→
+   463→Work Log:
+   464→- Read worklog (16 prior rounds); both services alive at start (Next 3000 HTTP 200, engine 3010 socket.io handshake OK; the "port 3010 in use" line in /tmp/bgp-sim.log was a stale duplicate-start artifact — live process PID 1243 healthy)
+   465→- agent-browser --help refreshed; QA through gateway :81 with a FRESH session (round-16 learning applied):
+   466→  - All 5 tabs render, socket LINK, clock ticking, 0 console/page errors, mobile 390px no overflow, E2E S1 attack lifecycle verified (inject → propagating → quarantined · LP 0 → L4 GUARDED, overlay flow rendered) — baseline clean → mandatory feature round
+   467→- NEW FEATURE 1: Deep-link URLs (page.tsx)
+   468→  - readDeepLink() reads ?tab= + ?prefix= (CIDR-validated) once at mount; a replaceState effect mirrors activeTab/drillPrefix into the URL (tab=control omitted as default; closed modal strips params)
+   469→  - VERIFIED LIVE: opened ?tab=control&prefix=192.0.2.0/24 → drilldown modal reopened with that prefix after full reload; ?tab=benchmark → Benchmark tab active; closing modal → URL clean; S2 attack ran during deep-linked session with no interference
+   470→  - copy-link button in drilldown header (Link2 icon, clipboard API + execCommand fallback, emerald "copied ✓" state for 1.6s) — verified state transition live
+   471→- NEW FEATURE 2: Live RIB filter & sort toolbar (route-table.tsx)
+   472→  - Search input (prefix · AS path · origin AS substring) with amber <mark> highlighting inside the route prefix; status filter chips (hijack/leak/suspicious/normal/recovering) with live counts; anomalous-only toggle; 4 sort modes (prefix A→Z · worst severity first · τ lowest · τ highest) via Radix Select; live "visible/total" count; clear button; empty state with reset link
+   473→  - VERIFIED LIVE: typed "192" → 1/3 rows; F key → anomalous filter (aria-pressed, count 0/3 when all normal); sort dropdown → "worst severity first" applied; Escape in search clears query then blurs
+   474→- NEW FEATURE 3: Event stream grep (event-log.tsx)
+   475→  - Compact search input ("grep…", expands on focus) combined with existing source chips; matched substrings highlighted inside event messages
+   476→  - VERIFIED LIVE: grepping "65010" → 2/70 events + 2 amber marks; combined with source filters; clear resets both
+   477→- NEW FEATURE 4: RIB live posture strip (page.tsx)
+   478→  - Header chips: avg τ (teal), worst-scoring route (tier-colored, prefix on hover), status mix counts (hijack/leak/suspicious/recovering)
+   479→  - VERIFIED LIVE during S2 attack: "worst τ 0.32" + "1 hijack" + threat L1 QUARANTINE chips appeared, avg τ 0.98 when stable
+   480→- NEW FEATURE 5: Expanded keyboard control + redesigned help modal (page.tsx)
+   481→  - New shortcuts: / focuses RIB search (cross-tab: switches to Control Room then focuses, module-level nonce guard prevents refocus on tab remount), F toggles anomalous-only, Esc closes help; transport shortcuts suppressed while drilldown modal owns the keyboard (Radix handles its Esc)
+   482→  - Help modal redesigned: grouped TRANSPORT / NAVIGATION / SENSES & MODALS sections with hairline dividers, kbd keycaps with inset shadow, deep-link hint strip, proper dialog role + close button
+   483→  - VERIFIED LIVE: / focused search input; F toggled filter; ? via header button opened modal with 3 groups; Esc closed (with body focus — note: Esc is intentionally swallowed when a text input holds focus, that clears the input first)
+   484→- ARCHITECTURE fix during implementation: anomalousOnly hoisted to page level (React compiler lint forbids setState-in-effect — the toggle is now a controlled prop; '/'-focus uses a pure-DOM cmd signal which is lint-clean)
+   485→- Styling polish (mandatory):
+   486→  - Route rows: status-colored left edge bars (emerald/amber/orange/red/cyan — verified red on the live S2 hijack route), route age chip in collapsed rows, search-match highlighting
+   487→  - Event log: message match highlighting, grep input expands on focus
+   488→  - Help modal: full redesign (see above); footer kbd hints extended with / and F; RIB section header hint mentions / filter (hidden on xs)
+   489→  - 5 new Operator Tooling docs cards
+   490→- Verification (all passed):
+   491→  - lint clean (exit 0) after every stage; dev.log clean (S2 run INSERTed into SQLite); both services alive at end (3000 HTTP 200 + 3010 handshake)
+   492→  - E2E: S2 attack full lifecycle with new UI live (stats chips, red edge, filters), sort select, grep, deep-links, copy-link, all shortcuts
+   493→  - Fresh-session console: 0 errors; mobile 390px no overflow; 15 recharts surfaces on Analytics; URL state clean after modal close
+   494→  - 4 screenshots archived: qa-round17-{control-filter,mobile,drilldown,shortcuts}.png
+   495→- VLM not retried this round (401 for 3 consecutive rounds per worklog) — DOM-geometry + content assertions used instead
+   496→
+   497→Stage Summary:
+   498→- 5 new features shipped: deep-link URLs (reload-safe, shareable, copy-link), live RIB filter/sort toolbar with match highlighting, event-stream grep, RIB live posture chips, expanded keyboard control with redesigned help modal
+   499→- Styling: status edges on route cards, amber match highlighting in two surfaces, grouped keycap help modal, richer footer hints, 5 new docs cards
+   500→- Baseline was bug-free this round; all verification green
+   501→
+   502→Unresolved issues / risks:
+   503→- Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
+   504→- Concurrent cron reviewer resets the engine periodically (environmental; deep-linked drilldown degrades gracefully to historical evidence after reset)
+   505→- Esc closes help modal only when focus is not inside a text input (input-guard precedence — by design, Esc clears the input first)
+   506→- Next-phase candidates: chaos-drill config randomizer (randomize knobs between rounds), copilot streaming table progressive render, forensic report PDF export (print stylesheet), GIF/video replay export, light theme, URL-synced RIB filter state (share filter views), per-prefix watchlist with sound alerts
+   507→

@@ -504,3 +504,55 @@ Unresolved issues / risks:
 - Concurrent cron reviewer resets the engine periodically (environmental; deep-linked drilldown degrades gracefully to historical evidence after reset)
 - Esc closes help modal only when focus is not inside a text input (input-guard precedence — by design, Esc clears the input first)
 - Next-phase candidates: chaos-drill config randomizer (randomize knobs between rounds), copilot streaming table progressive render, forensic report PDF export (print stylesheet), GIF/video replay export, light theme, URL-synced RIB filter state (share filter views), per-prefix watchlist with sound alerts
+
+---
+Task ID: 18
+Agent: main
+Task: QA baseline round + mandatory feature round (per-prefix watchlist with alerts, chaos-drill config fuzz, forensic print/PDF export) + styling polish + full verification
+
+Work Log:
+- Read worklog (17 prior rounds); both services alive at start (Next 3000 HTTP 200, engine 3010 socket handshake; the "port 3010 in use" line in /tmp/bgp-sim.log remains a stale duplicate-start artifact — live process PID 1243 healthy)
+- QA baseline via agent-browser — IMPORTANT access note: the app must be QA'd through the GATEWAY (http://localhost:81), not localhost:3000 directly — the socket.io client connects via /?XTransformPort=3010 which only the gateway routes; opening :3000 shows OFFLINE (reconfirmed this round; same as prior rounds' "gateway :81" notes)
+  - All 5 tabs render, socket LINK, L4 GUARDED, 14 recharts SVG surfaces on Analytics, Benchmark A/B + chaos + Variant Performance intact, 23→32 runs in archive during the round
+  - E2E S2 attack full lifecycle: inject → detect → quarantine (LP 0 + no-export) → mitigate → run #26 persisted to SQLite (MTTD 5s, MTTM 10s, MSR ✓, RIB ✓, groundTruth=3, detectedClass=3)
+  - Fresh-session console: 0 errors; mobile 390px: no page-level overflow (single tablist "overflow" is the intentional scrollable TabsList — false positive); lint clean → baseline clean → mandatory feature round
+- NEW FEATURE 1: Per-prefix operator watchlist (src/lib/bgp-sim/watchlist.ts ~170 lines + src/components/bgp/watchlist-strip.tsx ~130 lines)
+  - Star any route row (★ button next to ⌖) to pin a prefix; watched set persists in localStorage (bgp-noc-watchlist); transition detection runs on every state tick: status changes AND trust-tier crossings (tierOf: ≥0.85/≥0.55/≥0.25/hijack bands) — refs hold the previous snapshot, alerts capped at 40, flash decays after 4.5s
+  - Alert side effects wired at page level: dedicated 'watch' siren tone (sound.ts — urgent repeating fifth 740/988Hz triangle), toast (destructive variant when the new state is hostile), amber flash on the route row + strip chip, header ★ count chip lights amber while any watched prefix is flashing
+  - WatchlistStrip (Control Room, above the RIB): per-watched-prefix chips with live status dot + τ (tone-colored) + QUAR badge + Eye hover → drilldown; latest-transition ticker chip (from→to·τ); clear button; violet idle theme → amber watch-glow while flashing
+  - VERIFIED LIVE: starred 192.0.2.0/24 → strip + header chip appear; S1 injection → toasts "Watchlist · 192.0.2.0/24 status change hijack → suspicious · τ 0.63 — hostile territory" + strip transition chip + QUAR badge; reload (same session) → watchlist persisted and captured "leak → normal" on rollback; S3 flapping → "normal → suspicious · τ 0.79" transition; mobile 390px strip renders, no overflow
+  - React-compiler lint constraint solved: transition side effects deferred via setTimeout(0) inside the scan effect (fires long before the next 800ms tick — no lost transitions)
+- NEW FEATURE 2: Chaos drill config fuzz (chaos-drill.tsx — FUZZ_GROUPS + buildFuzzPatch + hook changes)
+  - New "config fuzz" toggle card (violet, third setup card, grid sm:2→lg:3): when ON each round resets every fuzzable knob to the drill-start snapshot, then randomizes 2-4 of 8 groups (ML sensitivity 0.6-1.6 · shadow streak 1-4 · shadow dwell 20-45s · rollback ticks 2-5 · telemetry FPR 0.5-5% · trust weights ±30% jitter · policy tiers ±0.08 clamp 0.12-0.95 · ML model RF/LogReg) — enabled-flags are NEVER touched (drill measures the tuned pipeline under knob pressure)
+  - Round data gains fuzzKnobs (human-readable deltas): Dices badge on round chips (title lists knobs), new "config" column in the per-round table (violet, "live cfg" when not fuzzed), dynamic header subtitle ("randomized scenarios + randomized defense knobs"), "fuzz armed — snapshot will be restored" idle chip
+  - Config restore: full SimConfig snapshot at start (JSON deep clone); finish() restores it via config:update deep-merge + completion toast; completion toast also fires for non-fuzz drills... (only when fuzz was on)
+  - VERIFIED LIVE: 6-round mixed fuzz drill (~95s real): rounds fuzzed "dwell 25s · ml.sens 0.81" / "streak 2 · ml.sens 0.96" / "τw ±30% (Σ1.19) · RF · rollback 2" / "fpr 1.1% · rollback 5 · RF"; 6/6 landed; config restored — Config Diff back to "matches A4 baseline" after the drill; engine runs #27-32 persisted
+- NEW FEATURE 3: Forensic report print / PDF (prefix-drilldown.tsx + report.ts)
+  - Refactored the export input into a shared forensicInput() helper; new printForensic(): builds the report HTML → Blob URL → window.open → print() on load (250ms layout grace); popup-blocked or error → falls back to the HTML download; blob URL revoked after 60s
+  - "print / pdf" button in the drilldown header (Printer icon, sky theme, disabled without evidence) — the report HTML already embeds @media print light-theme styles, so the browser print dialog's "Save as PDF" produces a paper-ready incident report
+  - VERIFIED LIVE: instrumented window.open captured the blob URL; fetched content = 23KB valid report (6 h2 sections, MTTD KPIs, @media print present, inline SVGs present)
+- Styling polish (mandatory):
+  - globals.css: watch-glow (amber box-shadow pulse, 1.4s), star-shimmer (violet drop-shadow breathing, 2.4s) — both added to the reduced-motion guard
+  - Route rows: starred ring (ring-1 ring-violet-800/50), filled star with star-shimmer, star color preview on row hover, flashing rows get amber border + glow shadow
+  - WatchlistStrip: violet/amber dual theme, transition ticker chip, status dots, QUAR badges, per-chip status-flash
+  - Header: ★ count chip with amber flash state while transitioning; footer: star watchlist hint added to the kbd strip
+  - Chaos drill: fuzz card + fuzz-armed chip + config column + Dices badges; drill header subtitle reflects fuzz mode
+  - 3 new Operator Tooling docs cards (watchlist, config fuzz, print/PDF); RIB header hint mentions ★ watchlist
+- Verification (all passed):
+  - lint clean (exit 0) after every stage; dev.log clean (POST /api/sim-runs 200 for all new runs); both services alive at end (3000 HTTP 200 + 3010 handshake)
+  - E2E: S2 baseline lifecycle, S1 watchlist alert loop (toast + flash + strip + QUAR), S3 watchlist tier transition, 6-round fuzz chaos drill with config restore ("matches A4 baseline"), print blob content check, watchlist persistence across reload
+  - Fresh-session console: 0 errors, 0 page errors; mobile 390px no page overflow (watchlist strip + star buttons verified at 390px)
+  - 8 screenshots archived: qa-round18-{baseline,e2e-s2,mobile-arch,mobile-control,mobile,control-watchlist,chaos-fuzz,final-control}.png
+- VLM not retried (401 for 4 consecutive rounds per worklog) — DOM-geometry + content assertions used instead
+
+Stage Summary:
+- 3 new features shipped: per-prefix watchlist (persistent, sound+toast+flash alerting on status/tier transitions — the operator alerting layer), chaos-drill config fuzz (8 knob groups, snapshot-anchored, restore-verified), forensic print/PDF (browser print dialog on the standalone report)
+- Styling: watch-glow + star-shimmer animations, starred-row ring, dual-theme watchlist strip, fuzz-aware chaos UI, header ★ chip, footer star hint
+- Baseline was bug-free this round; all verification green; runs #26-32 persisted through the round
+
+Unresolved issues / risks:
+- agent-browser close+open creates a FRESH browser profile (localStorage reset) — watchlist persistence across browser restarts can't be proven via agent-browser (same-session reload WAS verified; real users keep their profile)
+- TOAST_LIMIT=1 replaces toasts: rapid watchlist transitions (S1 hijack → suspicious → hijack) show only the latest — visible history lives in the strip ticker + alerts list (capped 40)
+- Chaos fuzz restore sets engine variantLabel to 'custom' (values exact via deep-merge; Config Diff still confirms baseline) — same cosmetic caveat as rounds 15/16
+- Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
+- Next-phase candidates: watchlist alert digest/export (CSV of transitions), watchlist chip in Analytics, URL-synced RIB filter state, chaos drill "stress mode" (fuzz + concurrent A/B), copilot awareness of watchlist transitions, light theme (if requested), run-comparison table (pick 2 runs side-by-side)

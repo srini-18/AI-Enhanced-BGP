@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ATTACK_SCENARIOS, RunResult, SimState } from '@/lib/bgp-sim/types';
+import { ATTACK_SCENARIOS, RunResult, SimConfig, SimState } from '@/lib/bgp-sim/types';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import {
   Zap,
@@ -18,6 +19,7 @@ import {
   ShieldX,
   Dices,
   Activity,
+  Sliders,
 } from 'lucide-react';
 
 export type ChaosPhase = 'idle' | 'running' | 'done' | 'cancelled' | 'error';
@@ -28,6 +30,8 @@ export interface ChaosRound {
   durationSec: number;
   run: RunResult | null;
   timedOut: boolean;
+  /** human-readable knob deltas applied this round (config fuzz) */
+  fuzzKnobs?: string[];
 }
 
 export interface ChaosExperiment {
@@ -36,7 +40,9 @@ export interface ChaosExperiment {
   current: number; // 1-based round currently executing (0 when idle)
   totalRounds: number;
   pool: ChaosPoolId;
-  start: (totalRounds: number, pool: ChaosPoolId) => void;
+  /** config fuzz active — knobs are randomized per round and restored at the end */
+  fuzz: boolean;
+  start: (totalRounds: number, pool: ChaosPoolId, fuzz: boolean) => void;
   cancel: () => void;
 }
 
@@ -53,6 +59,121 @@ const ROUND_GAP_MS = 1_800;
 const STEP_MS = 700;
 
 /**
+ * Config-fuzz knob groups — each round resets every fuzzable knob to the
+ * operator's snapshot value, then randomizes 2-4 groups. Enabled-flags are
+ * NEVER touched: the drill measures the tuned pipeline under knob pressure,
+ * not a disabled defense.
+ */
+const FUZZ_GROUPS = [
+  {
+    id: 'ml-sens',
+    label: 'ML sensitivity',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const v = 0.6 + Math.random() * 1.0;
+      patch.ml = { ...((patch.ml as object) ?? {}), sensitivity: Number(v.toFixed(2)) };
+      summary.push(`ml.sens ${v.toFixed(2)}`);
+    },
+  },
+  {
+    id: 'shadow-streak',
+    label: 'shadow streak',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const v = 1 + Math.floor(Math.random() * 4);
+      patch.shadow = { ...((patch.shadow as object) ?? {}), requiredConsecutiveTicks: v };
+      summary.push(`streak ${v}`);
+    },
+  },
+  {
+    id: 'shadow-dwell',
+    label: 'min dwell',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const v = 20 + Math.floor(Math.random() * 26);
+      patch.shadow = { ...((patch.shadow as object) ?? {}), minDwellSec: v };
+      summary.push(`dwell ${v}s`);
+    },
+  },
+  {
+    id: 'rollback',
+    label: 'rollback ticks',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const v = 2 + Math.floor(Math.random() * 4);
+      patch.rollback = { requiredNormalTicks: v };
+      summary.push(`rollback ${v}`);
+    },
+  },
+  {
+    id: 'noise',
+    label: 'telemetry FPR',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const v = 0.005 + Math.random() * 0.045;
+      patch.global = { ...((patch.global as object) ?? {}), noiseFpr: Number(v.toFixed(3)) };
+      summary.push(`fpr ${(v * 100).toFixed(1)}%`);
+    },
+  },
+  {
+    id: 'trust-weights',
+    label: 'trust weights',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const w = base.trust.weights;
+      const jittered = {
+        origin: Math.max(0.02, w.origin * (0.7 + Math.random() * 0.6)),
+        path: Math.max(0.02, w.path * (0.7 + Math.random() * 0.6)),
+        flap: Math.max(0.02, w.flap * (0.7 + Math.random() * 0.6)),
+        prefix: Math.max(0.02, w.prefix * (0.7 + Math.random() * 0.6)),
+        peer: Math.max(0.02, w.peer * (0.7 + Math.random() * 0.6)),
+        ml: Math.max(0.02, w.ml * (0.7 + Math.random() * 0.6)),
+      };
+      const sum = Object.values(jittered).reduce((a, b) => a + b, 0);
+      patch.trust = { weights: jittered };
+      summary.push(`τw ±30% (Σ${sum.toFixed(2)})`);
+    },
+  },
+  {
+    id: 'tiers',
+    label: 'policy tiers',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const t = base.policy.thresholds;
+      const clamp = (v: number) => Math.min(0.95, Math.max(0.12, v));
+      patch.policy = {
+        thresholds: {
+          normal: clamp(t.normal + (Math.random() - 0.5) * 0.16),
+          suspicious: clamp(t.suspicious + (Math.random() - 0.5) * 0.16),
+          leak: clamp(t.leak + (Math.random() - 0.5) * 0.16),
+        },
+      };
+      summary.push('tiers ±0.08');
+    },
+  },
+  {
+    id: 'ml-model',
+    label: 'ML model',
+    apply: (base: SimConfig, patch: Record<string, unknown>, summary: string[]) => {
+      const model = Math.random() < 0.5 ? 'random_forest' : 'logistic_regression';
+      patch.ml = { ...((patch.ml as object) ?? {}), model };
+      summary.push(model === 'random_forest' ? 'RF' : 'LogReg');
+    },
+  },
+];
+
+/** build the per-round fuzz patch: reset all fuzzable knobs to snapshot, then randomize 2-4 groups */
+function buildFuzzPatch(base: SimConfig): { patch: Record<string, unknown>; summary: string[] } {
+  const patch: Record<string, unknown> = {
+    // snapshot-anchored resets so rounds never stack drift
+    ml: { sensitivity: base.ml.sensitivity, model: base.ml.model },
+    shadow: { requiredConsecutiveTicks: base.shadow.requiredConsecutiveTicks, minDwellSec: base.shadow.minDwellSec },
+    rollback: { requiredNormalTicks: base.rollback.requiredNormalTicks },
+    global: { noiseFpr: base.global.noiseFpr },
+    trust: { weights: { ...base.trust.weights } },
+    policy: { thresholds: { ...base.policy.thresholds } },
+  };
+  const summary: string[] = [];
+  const count = 2 + Math.floor(Math.random() * 3); // 2-4 groups
+  const shuffled = [...FUZZ_GROUPS].sort(() => Math.random() - 0.5).slice(0, count);
+  for (const g of shuffled) g.apply(base, patch, summary);
+  return { patch, summary };
+}
+
+/**
  * Chaos drill state machine — page-level (above the Tabs boundary) so it
  * survives tab switches. Soak-tests the configured defense by firing a
  * randomized sequence of attack scenarios back-to-back, collecting the
@@ -65,17 +186,21 @@ export function useChaosDrill({
   onInject,
   onWithdraw,
   onStart,
+  onUpdateConfig,
 }: {
   state: SimState | null;
   onInject: (scenarioId: string, durationSec?: number) => void;
   onWithdraw: () => void;
   onStart: () => void;
+  onUpdateConfig: (patch: Partial<SimConfig> | Record<string, unknown>) => void;
 }): ChaosExperiment {
+  const { toast } = useToast();
   const [phase, setPhase] = useState<ChaosPhase>('idle');
   const [rounds, setRounds] = useState<ChaosRound[]>([]);
   const [current, setCurrent] = useState(0);
   const [totalRounds, setTotalRounds] = useState(6);
   const [pool, setPool] = useState<ChaosPoolId>('all');
+  const [fuzz, setFuzz] = useState(false);
 
   const stateRef = useRef(state);
   useEffect(() => {
@@ -90,7 +215,14 @@ export function useChaosDrill({
   const baselineKeysRef = useRef<Set<string>>(new Set());
   const historyLenRef = useRef(0);
   const lastScenarioRef = useRef('');
-  const activeRoundSpecRef = useRef<{ scenarioId: string; durationSec: number } | null>(null);
+  const activeRoundSpecRef = useRef<{ scenarioId: string; durationSec: number; fuzzKnobs?: string[] } | null>(null);
+  /** operator config snapshot at drill start — restored when the drill ends */
+  const configSnapshotRef = useRef<SimConfig | null>(null);
+  const fuzzRef = useRef(false);
+  const onUpdateConfigRef = useRef(onUpdateConfig);
+  useEffect(() => {
+    onUpdateConfigRef.current = onUpdateConfig;
+  }, [onUpdateConfig]);
 
   const runKey = (r: RunResult) => `${r.runId}:${r.injectedAt}`;
 
@@ -106,7 +238,14 @@ export function useChaosDrill({
       lastScenarioRef.current = scenarioId;
       // randomize duration 45-80s so each round exercises a different dwell
       const durationSec = 45 + Math.floor(Math.random() * 36);
-      activeRoundSpecRef.current = { scenarioId, durationSec };
+      // config fuzz: reset-to-snapshot + randomize 2-4 knob groups before injection
+      let fuzzKnobs: string[] | undefined;
+      if (fuzzRef.current && configSnapshotRef.current) {
+        const { patch, summary } = buildFuzzPatch(configSnapshotRef.current);
+        onUpdateConfigRef.current(patch);
+        fuzzKnobs = summary;
+      }
+      activeRoundSpecRef.current = { scenarioId, durationSec, fuzzKnobs };
       baselineKeysRef.current = new Set((stateRef.current?.history ?? []).map(runKey));
       historyLenRef.current = stateRef.current?.history.length ?? 0;
       roundStartRef.current = Date.now();
@@ -125,13 +264,22 @@ export function useChaosDrill({
   const finish = useCallback(
     (outcome: ChaosPhase) => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      // restore the operator's config snapshot when fuzzing was active
+      if (fuzzRef.current && configSnapshotRef.current) {
+        onUpdateConfigRef.current(configSnapshotRef.current);
+        configSnapshotRef.current = null;
+        toast({
+          title: 'Chaos drill complete',
+          description: `Configuration restored to your snapshot after ${outcome === 'done' ? 'a full drill' : 'an early stop'} — check Config Diff to confirm.`,
+        });
+      }
       phaseRef.current = outcome;
       currentRef.current = 0;
       setPhase(outcome);
       setCurrent(0);
       activeRoundSpecRef.current = null;
     },
-    []
+    [toast]
   );
 
   const appendRound = useCallback((round: ChaosRound) => {
@@ -161,7 +309,7 @@ export function useChaosDrill({
       (r) => r.scenarioId === spec.scenarioId && !baselineKeysRef.current.has(runKey(r))
     );
     if (landed) {
-      appendRound({ index: idx, scenarioId: spec.scenarioId, durationSec: spec.durationSec, run: landed, timedOut: false });
+      appendRound({ index: idx, scenarioId: spec.scenarioId, durationSec: spec.durationSec, run: landed, timedOut: false, fuzzKnobs: spec.fuzzKnobs });
       activeRoundSpecRef.current = null;
       if (idx >= totalRef.current) {
         finish('done');
@@ -181,7 +329,7 @@ export function useChaosDrill({
     // round timeout watchdog → record timeout, move on
     if (Date.now() - roundStartRef.current > ROUND_TIMEOUT_MS) {
       onWithdraw();
-      appendRound({ index: idx, scenarioId: spec.scenarioId, durationSec: spec.durationSec, run: null, timedOut: true });
+      appendRound({ index: idx, scenarioId: spec.scenarioId, durationSec: spec.durationSec, run: null, timedOut: true, fuzzKnobs: spec.fuzzKnobs });
       activeRoundSpecRef.current = null;
       if (idx >= totalRef.current) {
         finish('error');
@@ -207,12 +355,16 @@ export function useChaosDrill({
   );
 
   const start = useCallback(
-    (total: number, poolId: ChaosPoolId) => {
+    (total: number, poolId: ChaosPoolId, fuzzOn: boolean) => {
       if (phaseRef.current === 'running') return;
       totalRef.current = Math.max(1, Math.min(24, total));
       poolRef.current = poolId;
+      fuzzRef.current = fuzzOn;
+      // snapshot the live config so fuzz rounds anchor to it and it can be restored
+      configSnapshotRef.current = stateRef.current ? JSON.parse(JSON.stringify(stateRef.current.config)) : null;
       setTotalRounds(totalRef.current);
       setPool(poolId);
+      setFuzz(fuzzOn);
       setRounds([]);
       phaseRef.current = 'running';
       setPhase('running');
@@ -227,7 +379,7 @@ export function useChaosDrill({
     finish('cancelled');
   }, [onWithdraw, finish]);
 
-  return { phase, rounds, current, totalRounds, pool, start, cancel };
+  return { phase, rounds, current, totalRounds, pool, fuzz, start, cancel };
 }
 
 /** outcome tone for a round chip */
@@ -251,9 +403,10 @@ export function ChaosDrill({
   state: SimState;
   experiment: ChaosExperiment;
 }) {
-  const { phase, rounds, current, totalRounds } = experiment;
+  const { phase, rounds, current, totalRounds, fuzz } = experiment;
   const [roundsSel, setRoundsSel] = useState(6);
   const [poolSel, setPoolSel] = useState<ChaosPoolId>('all');
+  const [fuzzSel, setFuzzSel] = useState(false);
   const running = phase === 'running';
 
   const completed = rounds.length;
@@ -276,8 +429,13 @@ export function ChaosDrill({
           <Zap className={`h-4 w-4 text-amber-400 ${running ? 'animate-pulse' : ''}`} />
           <span className="text-xs font-semibold text-slate-200">Chaos Drill · Soak Test</span>
           <span className="text-[10px] font-mono text-slate-600 hidden sm:inline">
-            randomized scenarios · your live config · round-by-round forensics
+            randomized scenarios{fuzz ? ' + randomized defense knobs' : ' · your live config'} · round-by-round forensics
           </span>
+          {fuzz && !running && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-violet-800/70 bg-violet-950/50 text-[8.5px] font-mono text-violet-300 leading-none">
+              <Sliders className="h-2.5 w-2.5" /> fuzz armed — snapshot will be restored
+            </span>
+          )}
         </div>
         {running ? (
           <Button
@@ -290,7 +448,7 @@ export function ChaosDrill({
         ) : (
           <Button
             size="sm"
-            onClick={() => experiment.start(roundsSel, poolSel)}
+            onClick={() => experiment.start(roundsSel, poolSel, fuzzSel)}
             title="fire a randomized soak-test sequence under your current configuration"
             className="h-7 font-mono text-[10px] bg-amber-600 hover:bg-amber-500 text-black"
           >
@@ -301,7 +459,7 @@ export function ChaosDrill({
 
       {/* setup row */}
       {!running && rounds.length === 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-2">
           <div className="rounded border border-slate-800 bg-slate-900/40 p-2">
             <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
               <Dices className="h-2.5 w-2.5 text-amber-400" /> rounds
@@ -349,6 +507,30 @@ export function ChaosDrill({
             </div>
             <div className="mt-1 text-[9px] font-mono text-slate-600 truncate">
               {POOLS.find((p) => p.id === poolSel)?.hint}
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-slate-900/40 p-2">
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+              <Sliders className="h-2.5 w-2.5 text-violet-400" /> config fuzz
+            </div>
+            <button
+              onClick={() => setFuzzSel((v) => !v)}
+              aria-pressed={fuzzSel}
+              className={`w-full flex items-center justify-between gap-2 px-2 py-1 rounded border text-[9.5px] font-mono transition-colors ${
+                fuzzSel
+                  ? 'border-violet-600 text-violet-200 bg-violet-950/50'
+                  : 'border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+              }`}
+            >
+              <span>{fuzzSel ? 'randomize knobs per round' : 'fixed — use my live config'}</span>
+              <span className={`px-1.5 rounded-full text-[8.5px] uppercase ${fuzzSel ? 'bg-violet-800/60 text-violet-100' : 'bg-slate-800 text-slate-500'}`}>
+                {fuzzSel ? 'on' : 'off'}
+              </span>
+            </button>
+            <div className="mt-1 text-[9px] font-mono text-slate-600 leading-snug">
+              {fuzzSel
+                ? '2-4 knob groups randomized each round (sensitivity · streak · dwell · rollback · FPR · τ weights · tiers · model) — snapshot restored at the end'
+                : 'every round runs under your exact live configuration'}
             </div>
           </div>
         </div>
@@ -408,11 +590,16 @@ export function ChaosDrill({
                 key={r.index}
                 title={`round ${r.index} · ${r.scenarioId} · ${r.durationSec}s injection · ${oc.label}${
                   r.run?.mttd != null ? ` · MTTD ${r.run.mttd}s` : ''
-                }`}
+                }${r.fuzzKnobs ? ` · fuzzed: ${r.fuzzKnobs.join(', ')}` : ''}`}
                 className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-mono ${oc.cls}`}
               >
                 <OcIcon className="h-2.5 w-2.5" />
                 <span className="text-slate-500">{r.index}</span> {r.scenarioId}
+                {r.fuzzKnobs && r.fuzzKnobs.length > 0 && (
+                  <span className="ml-0.5 text-violet-300/90" title={`fuzzed knobs: ${r.fuzzKnobs.join(' · ')}`}>
+                    <Dices className="h-2.5 w-2.5" />
+                  </span>
+                )}
               </span>
             );
           })}
@@ -472,6 +659,7 @@ export function ChaosDrill({
                 <th className="text-right py-1 px-2 font-medium">MTTD</th>
                 <th className="text-right py-1 px-2 font-medium">MTTM</th>
                 <th className="text-left py-1 px-2 font-medium">policy</th>
+                <th className="text-left py-1 px-2 font-medium hidden sm:table-cell">config</th>
                 <th className="text-right py-1 px-2 font-medium">run</th>
               </tr>
             </thead>
@@ -490,6 +678,13 @@ export function ChaosDrill({
                     <td className="py-1 px-2 text-right text-amber-300">{r.run?.mttd != null ? `${r.run.mttd}s` : '—'}</td>
                     <td className="py-1 px-2 text-right text-orange-300">{r.run?.mttm != null ? `${r.run.mttm}s` : '—'}</td>
                     <td className="py-1 px-2 text-slate-400 max-w-40 truncate">{r.run?.appliedPolicy || '—'}</td>
+                    <td className="py-1 px-2 text-violet-300/80 max-w-44 truncate hidden sm:table-cell" title={r.fuzzKnobs?.join(' · ')}>
+                      {r.fuzzKnobs && r.fuzzKnobs.length > 0 ? (
+                        <span className="inline-flex items-center gap-1"><Dices className="h-2.5 w-2.5 shrink-0" />{r.fuzzKnobs.join(' ')}</span>
+                      ) : (
+                        <span className="text-slate-600">live cfg</span>
+                      )}
+                    </td>
                     <td className="py-1 px-2 text-right text-slate-500 tabular-nums">{r.run ? `#${r.run.runId}` : '—'}</td>
                   </tr>
                 );
@@ -503,7 +698,8 @@ export function ChaosDrill({
         <p className="text-[10.5px] font-mono text-slate-500 leading-relaxed">
           Continuous adversarial pressure test: fires a randomized scenario sequence (mixed hijacks/leaks/flapping) under your
           current configuration, records detection, mitigation and timing for every round, and summarizes resilience
-          KPIs — the soak-test companion to the controlled A/B laboratory.
+          KPIs — the soak-test companion to the controlled A/B laboratory. Enable <span className="text-violet-300">config fuzz</span> to
+          also randomize defense knobs between rounds — your configuration is snapshotted and restored at the end.
         </p>
       )}
     </div>

@@ -4,11 +4,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useBgpSim } from '@/lib/bgp-sim/client';
 import { SimConfig, RunResult, SimEvent, SimState, ATTACK_SCENARIOS, RouteSnapshot } from '@/lib/bgp-sim/types';
 import { playAlert, alertForEvent, primeAudioUnlock, isMuted, setMuted } from '@/lib/bgp-sim/sound';
+import { useWatchlist } from '@/lib/bgp-sim/watchlist';
 import { TopologyGraph } from '@/components/bgp/topology-graph';
 import { PrefixDrilldown } from '@/components/bgp/prefix-drilldown';
 import { ControlCenter } from '@/components/bgp/control-center';
 import { AttackPanel } from '@/components/bgp/attack-panel';
 import { RouteTable, RouteCmd } from '@/components/bgp/route-table';
+import { WatchlistStrip } from '@/components/bgp/watchlist-strip';
 import { EventLog } from '@/components/bgp/event-log';
 import { AnalyticsPanel } from '@/components/bgp/analytics';
 import { BenchmarkPanel } from '@/components/bgp/benchmark';
@@ -27,7 +29,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, RotateCcw, Radio, CircleDot, Layers, SlidersHorizontal, BarChart3,
-  Trophy, BookOpen, Sparkles, Keyboard, Volume2, VolumeX,
+  Trophy, BookOpen, Sparkles, Keyboard, Volume2, VolumeX, Star,
 } from 'lucide-react';
 
 /**
@@ -183,6 +185,17 @@ export default function Home() {
   // route-table anomalous-only filter — page-owned so the F shortcut works from any tab
   const [anomalousOnly, setAnomalousOnly] = useState(false);
 
+  // per-prefix operator watchlist — star routes, get alerted on status/tier transitions
+  const watchlist = useWatchlist(state, (alert) => {
+    playAlert('watch');
+    const hostile = ['hijack', 'leak', 'suspicious'].includes(alert.to);
+    toast({
+      title: `Watchlist · ${alert.prefix} ${alert.kind === 'status' ? 'status' : 'trust tier'} change`,
+      description: `${alert.from} → ${alert.to}${alert.trust != null ? ` · τ ${alert.trust.toFixed(2)}` : ''}${hostile ? ' — hostile territory, check the drill-down.' : ' — recovering.'}`,
+      variant: hostile ? 'destructive' : 'default',
+    });
+  });
+
   // ablation A/B experiment state machine — page level, survives tab switches
   const ablation = useAblationExperiment({
     state,
@@ -199,6 +212,7 @@ export default function Home() {
     onInject: injectAttack,
     onWithdraw: withdrawAttack,
     onStart: start,
+    onUpdateConfig: updateConfig,
   });
 
   const running = state?.running ?? false;
@@ -375,6 +389,19 @@ export default function Home() {
               <span className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-violet-900/60 text-violet-300 bg-violet-950/40">
                 {variantLabel}
               </span>
+              {watchlist.watched.length > 0 && (
+                <span
+                  className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border transition-all ${
+                    watchlist.flashing.size > 0
+                      ? 'border-amber-500 bg-amber-950/60 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.35)]'
+                      : 'border-violet-800 text-violet-300 bg-violet-950/40'
+                  }`}
+                  title={`watchlist — ${watchlist.watched.join(' · ')}${watchlist.flashing.size > 0 ? ' · TRANSITION!' : ''}`}
+                >
+                  <Star className={`h-2.5 w-2.5 ${watchlist.flashing.size > 0 ? 'fill-amber-300 animate-pulse' : ''}`} />
+                  {watchlist.watched.length}★
+                </span>
+              )}
             </div>
             <Button
               size="sm"
@@ -741,8 +768,11 @@ export default function Home() {
                           );
                         })()}
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">{Object.keys(state.routes).length} prefixes · click a route for diagnostics · ⌖ full history · <kbd className="kbd-hint">/</kbd> filter</span>
+                      <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">{Object.keys(state.routes).length} prefixes · click a route for diagnostics · ⌖ full history · ★ watchlist · <kbd className="kbd-hint">/</kbd> filter</span>
                       <span className="text-[10px] font-mono text-slate-500 sm:hidden">{Object.keys(state.routes).length} prefixes · ⌖ for history</span>
+                    </div>
+                    <div className="mb-2">
+                      <WatchlistStrip state={state} watchlist={watchlist} onFocusPrefix={setDrillPrefix} />
                     </div>
                     <RouteTable
                       state={state}
@@ -750,6 +780,7 @@ export default function Home() {
                       cmd={routeCmd}
                       anomalousOnly={anomalousOnly}
                       onToggleAnomalous={() => setAnomalousOnly((v) => !v)}
+                      watchlist={watchlist}
                     />
                   </div>
 
@@ -942,11 +973,14 @@ Historical defenses compared in parallel:
                       ['Variant performance archive', 'Analytics tab: detection rate, MSR and mean MTTD/MTTM aggregated per variant across every run ever persisted to SQLite — the long-horizon ablation story'],
                       ['A/B fast modes', '2×/4× speed selector on the A/B laboratory — shortens the injected attack (60s/45s) so full experiments complete in ~15-40s real time while preserving lifecycle fidelity'],
                       ['Chaos drill · soak test', 'Benchmark tab: randomized scenario sequence (mixed/hijack/leak pools) fired back-to-back under your live config — per-round forensics, detection/MSR/MTTD KPIs, worst-case tracking; page-level state machine survives tab switches'],
+                      ['Chaos config fuzz', 'optional drill mode: 2-4 defense knob groups (ML sensitivity · shadow streak/dwell · rollback ticks · telemetry FPR · trust weights · policy tiers · ML model) are randomized per round — anchored to a snapshot of your config, never touching enabled flags, and fully restored when the drill ends'],
                       ['Per-prefix forensic export', '⌖ drill-down modal: one-click standalone HTML forensic report — run KPIs, 4-defense comparison, inline-SVG trust trajectory with tier lines, lifecycle timeline bands, event log, RIB audit and the 10-feature vector'],
+                      ['Forensic print / PDF', 'drill-down header: print button renders the same forensic report in a print-optimized window (light theme via embedded @media print styles) — choose “Save as PDF” in the dialog for a paper-ready incident report'],
                       ['Deep-link URLs', 'the active tab and drill-down prefix are mirrored into the address bar (?tab=…&prefix=…) — reload-safe, shareable forensic views; copy-link button in the drill-down header'],
                       ['Live RIB filter & sort', 'route table toolbar: text search (prefix · AS path · origin) with amber match highlighting, status chips with live counts, anomalous-only toggle (F) and 4 sort orders (prefix / worst severity / τ) — / focuses the box'],
                       ['Event stream grep', 'text search across the controller event stream combined with the source chips — matched substrings are highlighted inside the messages'],
                       ['Route table live posture strip', 'RIB header shows mean τ, the worst-scoring route and the live status mix (hijack / leak / suspicious / recovering) as tone-coded chips'],
+                      ['Per-prefix watchlist', 'star any route row (★) to pin it on the operator watchlist — persisted across reloads; when a watched prefix changes status or crosses a trust tier you get a dedicated siren tone, a toast, an amber flash on the row and the header ★ chip lights up; the strip above the RIB shows live τ + status per watched prefix'],
                       ['Expanded keyboard control', 'Space run/pause · R reset · M mute · 1-5 tabs · / RIB search · F anomalous filter · ? grouped operator reference · Esc closes modals — shortcuts are suppressed while the drill-down owns the keyboard'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
@@ -991,6 +1025,8 @@ Historical defenses compared in parallel:
             <span className="hidden lg:inline">anomalous</span>
             <span className="kbd-hint" aria-hidden="true">R</span>
             <span className="hidden lg:inline">reset</span>
+            <Star className="hidden lg:inline h-2.5 w-2.5 text-violet-400" aria-hidden="true" />
+            <span className="hidden lg:inline">watchlist</span>
             <span className="kbd-hint" aria-hidden="true">?</span>
             <span className="hidden lg:inline">help</span>
             <span className="hidden xl:inline text-slate-600">· LocalPref 100/80/50/0 + no-export · Gao-Rexford · RFC 1997/6811/9234</span>

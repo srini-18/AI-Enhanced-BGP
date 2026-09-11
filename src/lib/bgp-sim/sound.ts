@@ -4,7 +4,7 @@
  * in localStorage.
  */
 
-export type AlertTone = 'inject' | 'detection' | 'quarantine' | 'success' | 'failed';
+export type AlertTone = 'inject' | 'detection' | 'quarantine' | 'success' | 'failed' | 'watch';
 
 const STORAGE_KEY = 'bgp-noc-muted';
 
@@ -60,6 +60,8 @@ const TONES: Record<AlertTone, ToneSpec> = {
   success: { freqs: [523, 659, 784], dur: 0.12, type: 'sine', gain: 0.12, gap: 0.05 },
   // single low buzz: mitigation failed
   failed: { freqs: [147], dur: 0.28, type: 'sawtooth', gain: 0.08, gap: 0 },
+  // watchlist siren: watched prefix changed state — urgent repeating fifth
+  watch: { freqs: [740, 988, 740, 988], dur: 0.08, type: 'triangle', gain: 0.13, gap: 0.03 },
 };
 
 /** Play one alert tone (no-op when muted or audio unavailable). */

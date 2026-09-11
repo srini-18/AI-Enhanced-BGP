@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   XCircle,
   FileDown,
+  Printer,
   Link2,
 } from 'lucide-react';
 import {
@@ -45,7 +46,7 @@ import {
   Area,
   CartesianGrid,
 } from 'recharts';
-import { downloadForensicReport } from '@/lib/bgp-sim/report';
+import { buildForensicReportHtml, downloadForensicReport } from '@/lib/bgp-sim/report';
 
 const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
   normal: { badge: 'border-emerald-800 bg-emerald-950/60 text-emerald-300', dot: 'bg-emerald-400', label: 'NORMAL' },
@@ -148,9 +149,10 @@ export function PrefixDrilldown({
   /** newest run touching this prefix — drives the forensic export */
   const newestRun = runs.length > 0 ? runs.reduce((a, b) => (a.injectedAt >= b.injectedAt ? a : b)) : null;
 
-  const exportForensic = () => {
-    if (!prefix) return;
-    const stamp = downloadForensicReport({
+  /** shared forensic-report input (used by both the HTML download and print/PDF) */
+  const forensicInput = () => {
+    if (!prefix) return null;
+    return {
       prefix,
       run: newestRun
         ? {
@@ -188,8 +190,42 @@ export function PrefixDrilldown({
       featureVector: r?.features ?? null,
       featureNames: FEATURE_NAMES,
       simTime: state.simTime,
-    });
+    } as Parameters<typeof downloadForensicReport>[0];
+  };
+
+  const exportForensic = () => {
+    const input = forensicInput();
+    if (!input) return;
+    const stamp = downloadForensicReport(input);
     return stamp;
+  };
+
+  /** open the report in a print window — browser print dialog supports "Save as PDF" */
+  const printForensic = () => {
+    const input = forensicInput();
+    if (!input) return;
+    try {
+      const html = buildForensicReportHtml(input);
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, '_blank', 'width=900,height=1000');
+      if (w) {
+        // give the new document a beat to layout, then bring up the print dialog
+        w.addEventListener('load', () => {
+          window.setTimeout(() => {
+            w.focus();
+            w.print();
+          }, 250);
+        });
+        // release the blob URL after the window has it
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
+        // popup blocked — degrade to a download
+        downloadForensicReport(input);
+      }
+    } catch {
+      downloadForensicReport(input);
+    }
   };
 
   /** copy the deep link (?tab=control&prefix=…) so operators can share/bookmark this forensic view */
@@ -259,6 +295,15 @@ export function PrefixDrilldown({
                   className="inline-flex items-center gap-1 px-2 py-1 rounded border border-emerald-800 bg-emerald-950/50 text-[9px] font-mono text-emerald-300 hover:bg-emerald-900/50 transition-colors disabled:opacity-40 focus-visible:ring-1 focus-visible:ring-emerald-500"
                 >
                   <FileDown className="h-3 w-3" /> export report
+                </button>
+                <button
+                  onClick={printForensic}
+                  disabled={events.length === 0 && trustHistory.length === 0}
+                  title="print the forensic report — choose “Save as PDF” in the print dialog for a PDF copy"
+                  aria-label="print or save as PDF the forensic report for this prefix"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-sky-800 bg-sky-950/50 text-[9px] font-mono text-sky-300 hover:bg-sky-900/50 transition-colors disabled:opacity-40 focus-visible:ring-1 focus-visible:ring-sky-500"
+                >
+                  <Printer className="h-3 w-3" /> print / pdf
                 </button>
                 <button
                   onClick={copyDeepLink}

@@ -14,7 +14,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   AlertTriangle, ArrowDownWideNarrow, ChevronDown, ChevronRight, Crosshair, ListFilter,
-  Search, ShieldAlert, ShieldCheck, TrendingDown, X,
+  Search, ShieldAlert, ShieldCheck, Star, TrendingDown, X,
 } from 'lucide-react';
 import { TrustSparkline } from './trust-sparkline';
 
@@ -119,12 +119,14 @@ export function RouteTable({
   cmd,
   anomalousOnly,
   onToggleAnomalous,
+  watchlist,
 }: {
   state: SimState;
   onFocusPrefix?: (prefix: string) => void;
   cmd?: RouteCmd;
   anomalousOnly?: boolean;
   onToggleAnomalous?: () => void;
+  watchlist?: { isWatched: (prefix: string) => boolean; toggle: (prefix: string) => void; flashing: Set<string> };
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -312,6 +314,7 @@ export function RouteTable({
           const trust = r.trust?.score;
           const isOpen = expanded === r.route.prefix;
           const quarantined = r.underOverride && r.route.locPref === 0;
+          const starred = watchlist?.isWatched(r.route.prefix) ?? false;
           return (
             <RouteRow
               key={r.route.prefix}
@@ -320,7 +323,10 @@ export function RouteTable({
               trust={trust}
               isOpen={isOpen}
               quarantined={quarantined}
+              starred={starred}
+              flashing={watchlist?.flashing.has(r.route.prefix) ?? false}
               onToggle={() => setExpanded(isOpen ? null : r.route.prefix)}
+              onToggleWatch={watchlist ? () => watchlist.toggle(r.route.prefix) : undefined}
               rollbackTicks={state.config.rollback.requiredNormalTicks}
               simTime={state.simTime}
               trustHistory={state.trustHistory.filter((p) => p.prefix === r.route.prefix)}
@@ -342,7 +348,10 @@ function RouteRow({
   trust,
   isOpen,
   quarantined,
+  starred,
+  flashing,
   onToggle,
+  onToggleWatch,
   rollbackTicks,
   simTime,
   trustHistory,
@@ -355,7 +364,10 @@ function RouteRow({
   trust: number | undefined;
   isOpen: boolean;
   quarantined: boolean;
+  starred: boolean;
+  flashing: boolean;
   onToggle: () => void;
+  onToggleWatch?: () => void;
   rollbackTicks: number;
   simTime: number;
   trustHistory: TrustPoint[];
@@ -367,13 +379,13 @@ function RouteRow({
   const hostile = r.status === 'hijack' || r.status === 'leak';
   return (
             <div
-              className={`group relative rounded-lg border transition-colors ${
+              className={`group relative rounded-lg border transition-all ${
                 quarantined
                   ? 'border-red-800/70 bg-red-950/20'
                   : r.underOverride
                     ? 'border-amber-800/60 bg-amber-950/10'
                     : 'border-slate-800 bg-slate-950/50'
-              }`}
+              } ${flashing ? 'border-amber-500/80 shadow-[0_0_14px_rgba(245,158,11,0.22)]' : ''} ${starred ? 'ring-1 ring-violet-800/50' : ''}`}
             >
               <div key={flashKey} className="pointer-events-none absolute inset-0 rounded-lg status-flash" aria-hidden />
               <span
@@ -440,6 +452,24 @@ function RouteRow({
                   </div>
                 )}
                 </button>
+                {onToggleWatch && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleWatch();
+                    }}
+                    title={starred ? 'unwatch — remove from watchlist alerts' : 'watch — get sound + flash alerts when this prefix changes status or trust tier'}
+                    aria-pressed={starred}
+                    aria-label={`${starred ? 'unwatch' : 'watch'} ${r.route.prefix}`}
+                    className={`shrink-0 w-8 flex items-center justify-center rounded transition-colors focus-visible:ring-1 focus-visible:ring-violet-600 outline-none ${
+                      starred
+                        ? 'text-violet-300 hover:text-violet-200 hover:bg-violet-950/40'
+                        : 'text-slate-600 hover:text-violet-300 hover:bg-violet-950/30'
+                    } ${onFocus ? '' : 'rounded-r-lg'}`}
+                  >
+                    <Star className={`h-3.5 w-3.5 ${starred ? 'fill-violet-400/70 star-shimmer' : 'group-hover:text-violet-300/70'}`} />
+                  </button>
+                )}
                 {onFocus && (
                   <button
                     onClick={(e) => {
