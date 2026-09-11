@@ -454,3 +454,53 @@ Unresolved issues / risks:
 - Chaos drill results are client-state (reset on reload — runs persist in engine history/SQLite; by design)
 - Chaos/A-B foreign-run misaturation risk if the 15-min cron reviewer injects the SAME scenarioId mid-experiment (accepted, same shape as round 15)
 - Next-phase candidates: copilot streaming table progressive render, PDF export of forensic reports (print stylesheet exists — window.print flow), per-prefix deep-link URL params, GIF/video replay export, chaos drill preset randomizer (also randomize config knobs between rounds), light theme (if requested)
+
+---
+Task ID: 17
+Agent: main
+Task: QA baseline round + mandatory feature round (deep-link URLs, live RIB filter/sort, event grep, expanded shortcuts) + styling polish (status edges, match highlighting, posture strip) + full verification
+
+Work Log:
+- Read worklog (16 prior rounds); both services alive at start (Next 3000 HTTP 200, engine 3010 socket.io handshake OK; the "port 3010 in use" line in /tmp/bgp-sim.log was a stale duplicate-start artifact — live process PID 1243 healthy)
+- agent-browser --help refreshed; QA through gateway :81 with a FRESH session (round-16 learning applied):
+  - All 5 tabs render, socket LINK, clock ticking, 0 console/page errors, mobile 390px no overflow, E2E S1 attack lifecycle verified (inject → propagating → quarantined · LP 0 → L4 GUARDED, overlay flow rendered) — baseline clean → mandatory feature round
+- NEW FEATURE 1: Deep-link URLs (page.tsx)
+  - readDeepLink() reads ?tab= + ?prefix= (CIDR-validated) once at mount; a replaceState effect mirrors activeTab/drillPrefix into the URL (tab=control omitted as default; closed modal strips params)
+  - VERIFIED LIVE: opened ?tab=control&prefix=192.0.2.0/24 → drilldown modal reopened with that prefix after full reload; ?tab=benchmark → Benchmark tab active; closing modal → URL clean; S2 attack ran during deep-linked session with no interference
+  - copy-link button in drilldown header (Link2 icon, clipboard API + execCommand fallback, emerald "copied ✓" state for 1.6s) — verified state transition live
+- NEW FEATURE 2: Live RIB filter & sort toolbar (route-table.tsx)
+  - Search input (prefix · AS path · origin AS substring) with amber <mark> highlighting inside the route prefix; status filter chips (hijack/leak/suspicious/normal/recovering) with live counts; anomalous-only toggle; 4 sort modes (prefix A→Z · worst severity first · τ lowest · τ highest) via Radix Select; live "visible/total" count; clear button; empty state with reset link
+  - VERIFIED LIVE: typed "192" → 1/3 rows; F key → anomalous filter (aria-pressed, count 0/3 when all normal); sort dropdown → "worst severity first" applied; Escape in search clears query then blurs
+- NEW FEATURE 3: Event stream grep (event-log.tsx)
+  - Compact search input ("grep…", expands on focus) combined with existing source chips; matched substrings highlighted inside event messages
+  - VERIFIED LIVE: grepping "65010" → 2/70 events + 2 amber marks; combined with source filters; clear resets both
+- NEW FEATURE 4: RIB live posture strip (page.tsx)
+  - Header chips: avg τ (teal), worst-scoring route (tier-colored, prefix on hover), status mix counts (hijack/leak/suspicious/recovering)
+  - VERIFIED LIVE during S2 attack: "worst τ 0.32" + "1 hijack" + threat L1 QUARANTINE chips appeared, avg τ 0.98 when stable
+- NEW FEATURE 5: Expanded keyboard control + redesigned help modal (page.tsx)
+  - New shortcuts: / focuses RIB search (cross-tab: switches to Control Room then focuses, module-level nonce guard prevents refocus on tab remount), F toggles anomalous-only, Esc closes help; transport shortcuts suppressed while drilldown modal owns the keyboard (Radix handles its Esc)
+  - Help modal redesigned: grouped TRANSPORT / NAVIGATION / SENSES & MODALS sections with hairline dividers, kbd keycaps with inset shadow, deep-link hint strip, proper dialog role + close button
+  - VERIFIED LIVE: / focused search input; F toggled filter; ? via header button opened modal with 3 groups; Esc closed (with body focus — note: Esc is intentionally swallowed when a text input holds focus, that clears the input first)
+- ARCHITECTURE fix during implementation: anomalousOnly hoisted to page level (React compiler lint forbids setState-in-effect — the toggle is now a controlled prop; '/'-focus uses a pure-DOM cmd signal which is lint-clean)
+- Styling polish (mandatory):
+  - Route rows: status-colored left edge bars (emerald/amber/orange/red/cyan — verified red on the live S2 hijack route), route age chip in collapsed rows, search-match highlighting
+  - Event log: message match highlighting, grep input expands on focus
+  - Help modal: full redesign (see above); footer kbd hints extended with / and F; RIB section header hint mentions / filter (hidden on xs)
+  - 5 new Operator Tooling docs cards
+- Verification (all passed):
+  - lint clean (exit 0) after every stage; dev.log clean (S2 run INSERTed into SQLite); both services alive at end (3000 HTTP 200 + 3010 handshake)
+  - E2E: S2 attack full lifecycle with new UI live (stats chips, red edge, filters), sort select, grep, deep-links, copy-link, all shortcuts
+  - Fresh-session console: 0 errors; mobile 390px no overflow; 15 recharts surfaces on Analytics; URL state clean after modal close
+  - 4 screenshots archived: qa-round17-{control-filter,mobile,drilldown,shortcuts}.png
+- VLM not retried this round (401 for 3 consecutive rounds per worklog) — DOM-geometry + content assertions used instead
+
+Stage Summary:
+- 5 new features shipped: deep-link URLs (reload-safe, shareable, copy-link), live RIB filter/sort toolbar with match highlighting, event-stream grep, RIB live posture chips, expanded keyboard control with redesigned help modal
+- Styling: status edges on route cards, amber match highlighting in two surfaces, grouped keycap help modal, richer footer hints, 5 new docs cards
+- Baseline was bug-free this round; all verification green
+
+Unresolved issues / risks:
+- Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
+- Concurrent cron reviewer resets the engine periodically (environmental; deep-linked drilldown degrades gracefully to historical evidence after reset)
+- Esc closes help modal only when focus is not inside a text input (input-guard precedence — by design, Esc clears the input first)
+- Next-phase candidates: chaos-drill config randomizer (randomize knobs between rounds), copilot streaming table progressive render, forensic report PDF export (print stylesheet), GIF/video replay export, light theme, URL-synced RIB filter state (share filter views), per-prefix watchlist with sound alerts

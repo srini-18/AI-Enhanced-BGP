@@ -1,20 +1,62 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FEATURE_NAMES, RouteSnapshot, SimState, TrustPoint } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronDown, ChevronRight, Crosshair, ShieldAlert, ShieldCheck, TrendingDown } from 'lucide-react';
+import {
+  AlertTriangle, ArrowDownWideNarrow, ChevronDown, ChevronRight, Crosshair, ListFilter,
+  Search, ShieldAlert, ShieldCheck, TrendingDown, X,
+} from 'lucide-react';
 import { TrustSparkline } from './trust-sparkline';
 
-const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
-  normal: { badge: 'border-emerald-800 bg-emerald-950/60 text-emerald-300', dot: 'bg-emerald-400', label: 'NORMAL' },
-  suspicious: { badge: 'border-amber-800 bg-amber-950/60 text-amber-300', dot: 'bg-amber-400', label: 'SUSPICIOUS' },
-  leak: { badge: 'border-orange-800 bg-orange-950/60 text-orange-300', dot: 'bg-orange-400', label: 'ROUTE LEAK' },
-  hijack: { badge: 'border-red-800 bg-red-950/60 text-red-300', dot: 'bg-red-500', label: 'HIJACK' },
-  recovering: { badge: 'border-cyan-800 bg-cyan-950/60 text-cyan-300', dot: 'bg-cyan-400', label: 'RECOVERING' },
-  withdrawn: { badge: 'border-slate-700 bg-slate-900 text-slate-400', dot: 'bg-slate-600', label: 'WITHDRAWN' },
+const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string; chip: string }> = {
+  normal: {
+    badge: 'border-emerald-800 bg-emerald-950/60 text-emerald-300', dot: 'bg-emerald-400', label: 'NORMAL',
+    chip: 'border-emerald-800/70 text-emerald-300 bg-emerald-950/40',
+  },
+  suspicious: {
+    badge: 'border-amber-800 bg-amber-950/60 text-amber-300', dot: 'bg-amber-400', label: 'SUSPICIOUS',
+    chip: 'border-amber-800/70 text-amber-300 bg-amber-950/40',
+  },
+  leak: {
+    badge: 'border-orange-800 bg-orange-950/60 text-orange-300', dot: 'bg-orange-400', label: 'ROUTE LEAK',
+    chip: 'border-orange-800/70 text-orange-300 bg-orange-950/40',
+  },
+  hijack: {
+    badge: 'border-red-800 bg-red-950/60 text-red-300', dot: 'bg-red-500', label: 'HIJACK',
+    chip: 'border-red-800/70 text-red-300 bg-red-950/40',
+  },
+  recovering: {
+    badge: 'border-cyan-800 bg-cyan-950/60 text-cyan-300', dot: 'bg-cyan-400', label: 'RECOVERING',
+    chip: 'border-cyan-800/70 text-cyan-300 bg-cyan-950/40',
+  },
+  withdrawn: {
+    badge: 'border-slate-700 bg-slate-900 text-slate-400', dot: 'bg-slate-600', label: 'WITHDRAWN',
+    chip: 'border-slate-700/70 text-slate-400 bg-slate-900/40',
+  },
 };
+
+/** severity rank for default "worst-first" ordering */
+const SEVERITY_RANK: Record<string, number> = { hijack: 0, leak: 1, suspicious: 2, recovering: 3, normal: 4, withdrawn: 5 };
+
+type SortMode = 'prefix' | 'severity' | 'trust-asc' | 'trust-desc';
+
+/** page-level keyboard command routed into the route table ('/' focuses the search box) */
+export type RouteCmd = { type: 'focus-search'; nonce: number } | null;
+
+/** module-level: remembers the last consumed command nonce across remounts
+ *  (Radix Tabs unmounts inactive content — without this, returning to the Control
+ *  Room tab would replay the last '/' command and steal focus back to the search box) */
+let lastConsumedCmdNonce = 0;
 
 function trustColor(t: number): string {
   if (t >= 0.85) return 'bg-emerald-500';
@@ -28,6 +70,31 @@ function trustText(t: number): string {
   if (t >= 0.55) return 'text-amber-300';
   if (t >= 0.25) return 'text-orange-300';
   return 'text-red-400';
+}
+
+/** status-colored left edge for route cards — terminal-log feel */
+const EDGE_COLOR: Record<string, string> = {
+  normal: 'bg-emerald-500/70',
+  suspicious: 'bg-amber-500/80',
+  leak: 'bg-orange-500/80',
+  hijack: 'bg-red-500/90',
+  recovering: 'bg-cyan-400/80',
+  withdrawn: 'bg-slate-600/80',
+};
+
+/** highlight the search match inside a plain string */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim().toLowerCase();
+  if (!q) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-amber-500/25 text-amber-200 rounded-sm px-0.5">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
 }
 
 function FeatureRow({ name, value }: { name: string; value: number }) {
@@ -46,14 +113,201 @@ function FeatureRow({ name, value }: { name: string; value: number }) {
   );
 }
 
-export function RouteTable({ state, onFocusPrefix }: { state: SimState; onFocusPrefix?: (prefix: string) => void }) {
+export function RouteTable({
+  state,
+  onFocusPrefix,
+  cmd,
+  anomalousOnly,
+  onToggleAnomalous,
+}: {
+  state: SimState;
+  onFocusPrefix?: (prefix: string) => void;
+  cmd?: RouteCmd;
+  anomalousOnly?: boolean;
+  onToggleAnomalous?: () => void;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const routes = Object.values(state.routes);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
+  const [sortMode, setSortMode] = useState<SortMode>('prefix');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const anomalous = anomalousOnly ?? false;
+
+  /** keyboard command from the page ('/' focuses search after a cross-tab jump) */
+  useEffect(() => {
+    if (!cmd || cmd.nonce === lastConsumedCmdNonce) return;
+    lastConsumedCmdNonce = cmd.nonce;
+    if (cmd.type === 'focus-search') {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    }
+  }, [cmd]);
+
+  const allRoutes = useMemo(() => Object.values(state.routes), [state.routes]);
+
+  /** status counts for the filter chips (pre-text-filter, so counts stay stable) */
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of allRoutes) counts[r.status] = (counts[r.status] ?? 0) + 1;
+    return counts;
+  }, [allRoutes]);
+
+  const visibleRoutes = useMemo(() => {
+    let list = allRoutes;
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.route.prefix.toLowerCase().includes(q) ||
+          r.route.asPath.toLowerCase().includes(q) ||
+          String(r.route.originAs).includes(q),
+      );
+    }
+    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status));
+    if (anomalous) list = list.filter((r) => r.status !== 'normal' || r.underOverride);
+    const sorted = [...list];
+    switch (sortMode) {
+      case 'severity':
+        sorted.sort((a, b) => (SEVERITY_RANK[a.status] ?? 9) - (SEVERITY_RANK[b.status] ?? 9));
+        break;
+      case 'trust-asc':
+        sorted.sort((a, b) => (a.trust?.score ?? 2) - (b.trust?.score ?? 2));
+        break;
+      case 'trust-desc':
+        sorted.sort((a, b) => (b.trust?.score ?? 2) - (a.trust?.score ?? 2));
+        break;
+      default:
+        sorted.sort((a, b) => a.route.prefix.localeCompare(b.route.prefix));
+    }
+    return sorted;
+  }, [allRoutes, query, statusFilter, anomalous, sortMode]);
+
+  const filtering = query.trim() !== '' || statusFilter.size > 0 || anomalous;
+
+  const toggleStatus = (status: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
+
+  const clearFilters = () => {
+    setQuery('');
+    setStatusFilter(new Set());
+    if (anomalous) onToggleAnomalous?.();
+  };
 
   return (
     <TooltipProvider delayDuration={100}>
       <div className="space-y-2">
-        {routes.map((r: RouteSnapshot) => {
+        {/* ── live filter / sort bar ─────────────────────────────── */}
+        <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-2 flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-40 sm:max-w-64">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-600 pointer-events-none" />
+            <Input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  if (query) setQuery('');
+                  else searchRef.current?.blur();
+                }
+              }}
+              placeholder="filter prefix · AS path · origin…"
+              aria-label="filter routes"
+              className="h-7 pl-7 pr-7 text-[11px] font-mono bg-slate-950 border-slate-800 placeholder:text-slate-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                aria-label="clear search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-300"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          <span className="flex items-center gap-1 flex-wrap" role="group" aria-label="status filter">
+            {(['hijack', 'leak', 'suspicious', 'normal', 'recovering'] as const).map((status) => {
+              const on = statusFilter.has(status);
+              const count = statusCounts[status] ?? 0;
+              const st = STATUS_STYLE[status];
+              return (
+                <button
+                  key={status}
+                  onClick={() => toggleStatus(status)}
+                  aria-pressed={on}
+                  className={`px-1.5 py-0.5 rounded-full border text-[8.5px] font-mono uppercase transition-colors leading-relaxed ${
+                    on ? st.chip : 'border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700'
+                  }`}
+                  title={on ? `hide ${STATUS_STYLE[status]?.label ?? status} routes` : `show only ${STATUS_STYLE[status]?.label ?? status} routes (multi-select)`}
+                >
+                  {status} {count > 0 && <span className="tabular-nums opacity-70">{count}</span>}
+                </button>
+              );
+            })}
+          </span>
+
+          <button
+            onClick={() => onToggleAnomalous?.()}
+            aria-pressed={anomalous}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[8.5px] font-mono uppercase transition-colors leading-relaxed ${
+              anomalous
+                ? 'border-amber-700 text-amber-300 bg-amber-950/50'
+                : 'border-slate-800 text-slate-600 hover:text-amber-400/80 hover:border-amber-800/50'
+            }`}
+            title="only routes with a non-normal status or active policy override (F)"
+          >
+            <AlertTriangle className="h-2.5 w-2.5" /> anomalous
+          </button>
+
+          <Select value={sortMode} onValueChange={(v: SortMode) => setSortMode(v)}>
+            <SelectTrigger
+              className="h-7 w-[132px] text-[10px] font-mono bg-slate-950 border-slate-800 text-slate-300 px-2 focus-visible:ring-1 focus-visible:ring-emerald-600"
+              aria-label="sort routes"
+            >
+              <ArrowDownWideNarrow className="h-3 w-3 mr-1 text-slate-600" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-slate-900 border-slate-800">
+              <SelectItem value="prefix" className="text-[11px] font-mono">prefix A→Z</SelectItem>
+              <SelectItem value="severity" className="text-[11px] font-mono">worst severity first</SelectItem>
+              <SelectItem value="trust-asc" className="text-[11px] font-mono">τ lowest first</SelectItem>
+              <SelectItem value="trust-desc" className="text-[11px] font-mono">τ highest first</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <span className="text-[9.5px] font-mono text-slate-500 tabular-nums flex items-center gap-1" aria-live="polite">
+            <ListFilter className="h-3 w-3 text-slate-600" />
+            {visibleRoutes.length}/{allRoutes.length}
+          </span>
+
+          {filtering && (
+            <button
+              onClick={clearFilters}
+              className="px-1.5 py-0.5 rounded-full border border-slate-800 text-[8.5px] font-mono text-slate-400 hover:text-slate-200 hover:border-slate-600 leading-relaxed"
+              title="clear all route filters (search · status · anomalous)"
+            >
+              clear
+            </button>
+          )}
+        </div>
+
+        {allRoutes.length > 0 && visibleRoutes.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/40 p-4 text-center">
+            <p className="text-[11px] font-mono text-slate-500">no routes match the current filters</p>
+            <button onClick={clearFilters} className="mt-1 text-[11px] font-mono text-emerald-400 hover:text-emerald-300 underline underline-offset-2">
+              reset filters
+            </button>
+          </div>
+        )}
+
+        {visibleRoutes.map((r: RouteSnapshot) => {
           const st = STATUS_STYLE[r.status] ?? STATUS_STYLE.normal;
           const trust = r.trust?.score;
           const isOpen = expanded === r.route.prefix;
@@ -72,6 +326,7 @@ export function RouteTable({ state, onFocusPrefix }: { state: SimState; onFocusP
               trustHistory={state.trustHistory.filter((p) => p.prefix === r.route.prefix)}
               thresholds={state.config.policy.thresholds}
               onFocus={onFocusPrefix ? () => onFocusPrefix(r.route.prefix) : undefined}
+              query={query}
             />
           );
         })}
@@ -93,6 +348,7 @@ function RouteRow({
   trustHistory,
   thresholds,
   onFocus,
+  query = '',
 }: {
   r: RouteSnapshot;
   st: { badge: string; dot: string; label: string };
@@ -105,6 +361,7 @@ function RouteRow({
   trustHistory: TrustPoint[];
   thresholds: { normal: number; suspicious: number; leak: number };
   onFocus?: () => void;
+  query?: string;
 }) {
   const flashKey = `${r.status}:${r.route.locPref}`;
   const hostile = r.status === 'hijack' || r.status === 'leak';
@@ -119,6 +376,10 @@ function RouteRow({
               }`}
             >
               <div key={flashKey} className="pointer-events-none absolute inset-0 rounded-lg status-flash" aria-hidden />
+              <span
+                aria-hidden
+                className={`absolute left-0 top-2 bottom-2 w-[2.5px] rounded-full ${EDGE_COLOR[r.status] ?? 'bg-slate-700'}`}
+              />
               <div className="flex items-stretch">
                 <button
                   className="flex-1 min-w-0 text-left p-3"
@@ -131,7 +392,7 @@ function RouteRow({
                   <span
                     className={`font-mono text-sm font-semibold text-slate-100 ${hostile ? 'text-red-200 drop-shadow-[0_0_6px_rgba(239,68,68,0.5)]' : ''}`}
                   >
-                    {r.route.prefix}
+                    <Highlight text={r.route.prefix} query={query} />
                   </span>
                   <Badge variant="outline" className={`text-[9px] h-4.5 px-1.5 ${st.badge}`}>
                     <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${st.dot} ${r.status !== 'normal' ? 'animate-pulse' : ''}`} />
@@ -175,6 +436,7 @@ function RouteRow({
                       <span className="text-cyan-400">recovery {r.recoveryStreak}/{rollbackTicks}</span>
                     )}
                     <span className="truncate">{r.policyAction}</span>
+                    <span className="ml-auto hidden sm:inline text-slate-600 shrink-0">age {Math.max(0, Math.round(simTime - r.route.lastUpdateEpoch))}s</span>
                   </div>
                 )}
                 </button>
@@ -184,7 +446,7 @@ function RouteRow({
                       e.stopPropagation();
                       onFocus();
                     }}
-                    title="open prefix drill-down — full history, trust decomposition, RIB audit"
+                    title="open prefix drill-down — full history, trust decomposition, RIB audit (deep-linked into the URL)"
                     aria-label={`drill down into ${r.route.prefix}`}
                     className="shrink-0 min-w-11 px-2.5 flex items-center justify-center text-slate-600 hover:text-emerald-300 hover:bg-emerald-950/30 rounded-r-lg transition-colors focus-visible:ring-1 focus-visible:ring-emerald-600 outline-none"
                   >

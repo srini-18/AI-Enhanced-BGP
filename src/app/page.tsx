@@ -8,7 +8,7 @@ import { TopologyGraph } from '@/components/bgp/topology-graph';
 import { PrefixDrilldown } from '@/components/bgp/prefix-drilldown';
 import { ControlCenter } from '@/components/bgp/control-center';
 import { AttackPanel } from '@/components/bgp/attack-panel';
-import { RouteTable } from '@/components/bgp/route-table';
+import { RouteTable, RouteCmd } from '@/components/bgp/route-table';
 import { EventLog } from '@/components/bgp/event-log';
 import { AnalyticsPanel } from '@/components/bgp/analytics';
 import { BenchmarkPanel } from '@/components/bgp/benchmark';
@@ -34,6 +34,25 @@ import {
  * NOC threat-condition level (DEFCON-style): derives posture from routes +
  * active run phase. L5 all-clear → L1 active hijack quarantine.
  */
+const VALID_TABS = ['control', 'analytics', 'benchmark', 'copilot', 'docs'] as const;
+const PREFIX_URL_RE = /^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/;
+
+/** read the initial deep-link (?tab=…&prefix=…) once, before first paint of state */
+function readDeepLink(): { tab: string; prefix: string | null } {
+  if (typeof window === 'undefined') return { tab: 'control', prefix: null };
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    const prefix = params.get('prefix');
+    return {
+      tab: (VALID_TABS as readonly string[]).includes(tab ?? '') ? (tab as string) : 'control',
+      prefix: prefix && PREFIX_URL_RE.test(prefix) ? prefix : null,
+    };
+  } catch {
+    return { tab: 'control', prefix: null };
+  }
+}
+
 function ThreatCondition({ state }: { state: SimState }) {
   const routes = Object.values(state.routes);
   const quarantined = routes.filter((r) => r.underOverride && r.route.locPref === 0).length;
@@ -152,13 +171,17 @@ function PhaseSteps({ phase }: { phase: RunResult['phase'] }) {
 export default function Home() {
   const { state, connected, start, pause, reset, updateConfig, applyPreset, resetConfig, injectAttack, injectCustom, withdrawAttack } = useBgpSim();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('control');
+  const [activeTab, setActiveTab] = useState<string>(() => readDeepLink().tab);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [soundOn, setSoundOn] = useState(!isMuted());
   // cross-tab deep link: jumping from Benchmark run history into the time-travel scrubber
   const [jumpTarget, setJumpTarget] = useState<{ t: number; nonce: number } | null>(null);
-  // per-prefix drill-down modal (opened from route rows + RIB log)
-  const [drillPrefix, setDrillPrefix] = useState<string | null>(null);
+  // per-prefix drill-down modal (opened from route rows + RIB log) — deep-linked into ?prefix=
+  const [drillPrefix, setDrillPrefix] = useState<string | null>(() => readDeepLink().prefix);
+  // keyboard command routed into the RouteTable ('/' focuses the RIB search box after a cross-tab jump)
+  const [routeCmd, setRouteCmd] = useState<RouteCmd>(null);
+  // route-table anomalous-only filter — page-owned so the F shortcut works from any tab
+  const [anomalousOnly, setAnomalousOnly] = useState(false);
 
   // ablation A/B experiment state machine — page level, survives tab switches
   const ablation = useAblationExperiment({
@@ -185,6 +208,19 @@ export default function Home() {
 
   /** unlock Web Audio on the first user gesture (browser autoplay policy) */
   useEffect(() => primeAudioUnlock(), []);
+
+  /** deep-link sync — keep ?tab=…&prefix=… in the URL so views survive reload & sharing */
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams();
+      if (activeTab !== 'control') params.set('tab', activeTab);
+      if (drillPrefix) params.set('prefix', drillPrefix);
+      const qs = params.toString();
+      window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+    } catch {
+      /* non-browser context — ignore */
+    }
+  }, [activeTab, drillPrefix]);
 
   /** NOC sound alerts — watch for NEW events and map them to tones */
   const events: SimEvent[] | undefined = state?.events;
@@ -260,11 +296,21 @@ export default function Home() {
     }
   }, [history, toast]);
 
-  /** Keyboard shortcuts: Space run/pause · R reset · M mute · 1-5 tabs · ? help */
+  /** Keyboard shortcuts: Space run/pause · R reset · M mute · 1-5 tabs · / route search · F anomalous-only · ? help · Esc close */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      // while the drill-down modal is open it owns the keyboard (Radix handles Esc) —
+      // suppress transport shortcuts so R/F/space can't fire behind the dialog
+      if (drillPrefix) {
+        if (e.key === 'Escape') setShowShortcuts(false);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setShowShortcuts(false);
+        return;
+      }
       if (e.key === ' ') {
         e.preventDefault();
         if (running) {
@@ -282,14 +328,20 @@ export default function Home() {
         const next = !soundOn;
         setSoundOn(next);
         setMuted(!next);
+      } else if (e.key === '/') {
+        e.preventDefault();
+        setActiveTab('control');
+        setRouteCmd({ type: 'focus-search', nonce: Date.now() });
+      } else if (e.key.toLowerCase() === 'f') {
+        setActiveTab('control');
+        setAnomalousOnly((v) => !v);
       } else if (e.key === '?' || (e.shiftKey && e.key === '/')) {
         setShowShortcuts((s) => !s);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [running, start, pause, reset, toast, soundOn]);
-
+  }, [running, start, pause, reset, toast, soundOn, drillPrefix]);
   return (
     <div className="dark min-h-screen flex flex-col bg-slate-950 text-slate-200 noc-grid-bg">
       <Toaster />
@@ -410,29 +462,85 @@ export default function Home() {
       {/* emerald hairline under the header */}
       <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
 
-      {/* shortcut overlay */}
+      {/* shortcut overlay — grouped operator reference */}
       {showShortcuts && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowShortcuts(false)}>
-          <div className="rounded-lg border border-slate-700 bg-slate-900 p-5 shadow-2xl max-w-sm w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-3">
-              <Keyboard className="h-4 w-4 text-emerald-400" />
-              <span className="text-sm font-semibold text-slate-100">Keyboard Shortcuts</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setShowShortcuts(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="keyboard shortcuts"
+        >
+          <div
+            className="rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl max-w-md w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3.5 border-b border-slate-800 bg-gradient-to-r from-slate-900 via-slate-800/60 to-slate-900 flex items-center gap-2.5">
+              <span className="flex items-center justify-center h-7 w-7 rounded-lg border border-emerald-800 bg-emerald-950/60">
+                <Keyboard className="h-4 w-4 text-emerald-400" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-100 leading-tight">Operator Shortcuts</div>
+                <div className="text-[10px] font-mono text-slate-500">NOC keyboard control · press <span className="text-emerald-400">Esc</span> to close</div>
+              </div>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                aria-label="close shortcuts"
+                className="ml-auto h-7 w-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              >
+                <span className="text-lg leading-none" aria-hidden>×</span>
+              </button>
             </div>
-            <div className="space-y-2 text-[11px] font-mono">
+            <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin">
               {[
-                ['Space', 'run / pause the simulation clock'],
-                ['R', 'reset to 10-AS baseline'],
-                ['M', 'mute / unmute NOC sound alerts'],
-                ['1 – 5', 'switch tabs (control · analytics · benchmark · copilot · docs)'],
-                ['?', 'toggle this help'],
-              ].map(([k, d]) => (
-                <div key={k} className="flex items-center gap-3">
-                  <kbd className="px-2 py-1 rounded border border-slate-700 bg-slate-950 text-emerald-300 text-[10px] min-w-12 text-center">{k}</kbd>
-                  <span className="text-slate-400">{d}</span>
+                {
+                  group: 'Transport',
+                  hint: 'simulation clock & engine',
+                  items: [
+                    ['Space', 'run / pause the simulation clock'],
+                    ['R', 'reset to 10-AS baseline'],
+                  ],
+                },
+                {
+                  group: 'Navigation',
+                  hint: 'tabs & route telemetry',
+                  items: [
+                    ['1 – 5', 'switch tabs (control · analytics · benchmark · copilot · docs)'],
+                    ['/', 'focus the live RIB filter — prefix / AS path / origin'],
+                    ['F', 'toggle anomalous-only route filter'],
+                  ],
+                },
+                {
+                  group: 'Senses & Modals',
+                  hint: 'alerts, help, deep links',
+                  items: [
+                    ['M', 'mute / unmute NOC sound alerts'],
+                    ['?', 'toggle this help'],
+                    ['Esc', 'close modals · clear filters when focused'],
+                  ],
+                },
+              ].map((grp) => (
+                <div key={grp.group}>
+                  <div className="flex items-baseline gap-2 mb-1.5">
+                    <span className="text-[10px] font-semibold tracking-widest text-emerald-400/90 uppercase">{grp.group}</span>
+                    <span className="text-[9px] font-mono text-slate-600">{grp.hint}</span>
+                    <span className="flex-1 h-px bg-slate-800/70" aria-hidden />
+                  </div>
+                  <div className="space-y-1">
+                    {grp.items.map(([k, d]) => (
+                      <div key={k} className="flex items-center gap-3 text-[11px] font-mono py-0.5">
+                        <kbd className="px-2 py-1 rounded border border-slate-700 bg-slate-950 text-emerald-300 text-[10px] min-w-14 text-center shadow-[inset_0_-2px_0_rgba(0,0,0,0.4)]">{k}</kbd>
+                        <span className="text-slate-400">{d}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] font-mono text-slate-500 leading-relaxed">
+                <span className="text-slate-400">Deep links:</span> the active tab and drill-down prefix live in the URL —
+                <span className="text-emerald-400"> ?tab=benchmark&prefix=192.0.2.0/24</span> — copy it to share or bookmark a forensic view.
+              </div>
             </div>
-            <Button size="sm" onClick={() => setShowShortcuts(false)} className="mt-4 w-full h-7 text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200">close</Button>
           </div>
         </div>
       )}
@@ -556,8 +664,8 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold text-slate-200">Live RIB / Route Telemetry</span>
                         {(() => {
                           const routes = Object.values(state.routes);
@@ -575,10 +683,74 @@ export default function Home() {
                             </span>
                           );
                         })()}
+                        {(() => {
+                          // live trust posture: mean τ + worst route + class mix
+                          const routes = Object.values(state.routes);
+                          if (routes.length === 0) return null;
+                          const scored = routes.filter((r) => r.trust !== undefined);
+                          const avg = scored.length
+                            ? scored.reduce((a, r) => a + (r.trust?.score ?? 0), 0) / scored.length
+                            : null;
+                          const worst = routes.reduce((a, r) =>
+                            (r.trust?.score ?? 2) < (a.trust?.score ?? 2) ? r : a, routes[0]);
+                          const worstTrust = worst.trust?.score ?? null;
+                          const mix = (['hijack', 'leak', 'suspicious', 'recovering'] as const)
+                            .map((s) => ({ s, n: routes.filter((r) => r.status === s).length }))
+                            .filter((x) => x.n > 0);
+                          return (
+                            <span className="flex items-center gap-1.5 flex-wrap">
+                              {avg !== null && (
+                                <span
+                                  className="px-1.5 py-px rounded-full border border-teal-900/70 bg-teal-950/40 text-[9px] font-mono text-teal-300 leading-none tabular-nums"
+                                  title={`mean trust score across ${scored.length} scored routes`}
+                                >
+                                  avg τ {avg.toFixed(2)}
+                                </span>
+                              )}
+                              {worstTrust !== null && worstTrust < 0.85 && (
+                                <span
+                                  className={`px-1.5 py-px rounded-full border leading-none text-[9px] font-mono tabular-nums ${
+                                    worstTrust < 0.25
+                                      ? 'border-red-900/70 bg-red-950/40 text-red-300'
+                                      : worstTrust < 0.55
+                                        ? 'border-orange-900/70 bg-orange-950/40 text-orange-300'
+                                        : 'border-amber-900/70 bg-amber-950/40 text-amber-300'
+                                  }`}
+                                  title={`lowest-scoring route: ${worst.route.prefix}`}
+                                >
+                                  worst τ {worstTrust.toFixed(2)}
+                                </span>
+                              )}
+                              {mix.map((x) => (
+                                <span
+                                  key={x.s}
+                                  className={`px-1.5 py-px rounded-full border leading-none text-[9px] font-mono ${
+                                    x.s === 'hijack'
+                                      ? 'border-red-900/70 bg-red-950/40 text-red-300'
+                                      : x.s === 'leak'
+                                        ? 'border-orange-900/70 bg-orange-950/40 text-orange-300'
+                                        : x.s === 'suspicious'
+                                          ? 'border-amber-900/70 bg-amber-950/40 text-amber-300'
+                                          : 'border-cyan-900/70 bg-cyan-950/40 text-cyan-300'
+                                  }`}
+                                >
+                                  {x.n} {x.s}
+                                </span>
+                              ))}
+                            </span>
+                          );
+                        })()}
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500">{Object.keys(state.routes).length} prefixes · click a route for diagnostics · ⌖ for full history</span>
+                      <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">{Object.keys(state.routes).length} prefixes · click a route for diagnostics · ⌖ full history · <kbd className="kbd-hint">/</kbd> filter</span>
+                      <span className="text-[10px] font-mono text-slate-500 sm:hidden">{Object.keys(state.routes).length} prefixes · ⌖ for history</span>
                     </div>
-                    <RouteTable state={state} onFocusPrefix={setDrillPrefix} />
+                    <RouteTable
+                      state={state}
+                      onFocusPrefix={setDrillPrefix}
+                      cmd={routeCmd}
+                      anomalousOnly={anomalousOnly}
+                      onToggleAnomalous={() => setAnomalousOnly((v) => !v)}
+                    />
                   </div>
 
                   <RibLogViewer state={state} onFocusPrefix={setDrillPrefix} />
@@ -771,6 +943,11 @@ Historical defenses compared in parallel:
                       ['A/B fast modes', '2×/4× speed selector on the A/B laboratory — shortens the injected attack (60s/45s) so full experiments complete in ~15-40s real time while preserving lifecycle fidelity'],
                       ['Chaos drill · soak test', 'Benchmark tab: randomized scenario sequence (mixed/hijack/leak pools) fired back-to-back under your live config — per-round forensics, detection/MSR/MTTD KPIs, worst-case tracking; page-level state machine survives tab switches'],
                       ['Per-prefix forensic export', '⌖ drill-down modal: one-click standalone HTML forensic report — run KPIs, 4-defense comparison, inline-SVG trust trajectory with tier lines, lifecycle timeline bands, event log, RIB audit and the 10-feature vector'],
+                      ['Deep-link URLs', 'the active tab and drill-down prefix are mirrored into the address bar (?tab=…&prefix=…) — reload-safe, shareable forensic views; copy-link button in the drill-down header'],
+                      ['Live RIB filter & sort', 'route table toolbar: text search (prefix · AS path · origin) with amber match highlighting, status chips with live counts, anomalous-only toggle (F) and 4 sort orders (prefix / worst severity / τ) — / focuses the box'],
+                      ['Event stream grep', 'text search across the controller event stream combined with the source chips — matched substrings are highlighted inside the messages'],
+                      ['Route table live posture strip', 'RIB header shows mean τ, the worst-scoring route and the live status mix (hijack / leak / suspicious / recovering) as tone-coded chips'],
+                      ['Expanded keyboard control', 'Space run/pause · R reset · M mute · 1-5 tabs · / RIB search · F anomalous filter · ? grouped operator reference · Esc closes modals — shortcuts are suppressed while the drill-down owns the keyboard'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>
@@ -808,6 +985,10 @@ Historical defenses compared in parallel:
           <span className="ml-auto hidden md:flex items-center gap-2">
             <span className="kbd-hint" aria-hidden="true">space</span>
             <span className="hidden lg:inline">run</span>
+            <span className="kbd-hint" aria-hidden="true">/</span>
+            <span className="hidden lg:inline">filter</span>
+            <span className="kbd-hint" aria-hidden="true">F</span>
+            <span className="hidden lg:inline">anomalous</span>
             <span className="kbd-hint" aria-hidden="true">R</span>
             <span className="hidden lg:inline">reset</span>
             <span className="kbd-hint" aria-hidden="true">?</span>

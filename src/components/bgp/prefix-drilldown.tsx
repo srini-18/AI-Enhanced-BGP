@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ATTACK_SCENARIOS,
   CLASS_NAMES,
@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   XCircle,
   FileDown,
+  Link2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -191,6 +192,32 @@ export function PrefixDrilldown({
     return stamp;
   };
 
+  /** copy the deep link (?tab=control&prefix=…) so operators can share/bookmark this forensic view */
+  const [copied, setCopied] = useState(false);
+  const copyDeepLink = async () => {
+    if (!prefix) return;
+    const url = `${window.location.origin}${window.location.pathname}?tab=control&prefix=${encodeURIComponent(prefix)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // clipboard API unavailable (insecure context) — fall back to a legacy path
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        /* give up silently */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
   return (
     <Dialog open={prefix !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto bg-slate-950 border-slate-800 text-slate-200 p-0">
@@ -232,6 +259,19 @@ export function PrefixDrilldown({
                   className="inline-flex items-center gap-1 px-2 py-1 rounded border border-emerald-800 bg-emerald-950/50 text-[9px] font-mono text-emerald-300 hover:bg-emerald-900/50 transition-colors disabled:opacity-40 focus-visible:ring-1 focus-visible:ring-emerald-500"
                 >
                   <FileDown className="h-3 w-3" /> export report
+                </button>
+                <button
+                  onClick={copyDeepLink}
+                  title="copy a deep link to this prefix forensics view (?prefix=… survives reload, shareable)"
+                  aria-label={`copy deep link for ${prefix}`}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-mono transition-colors focus-visible:ring-1 focus-visible:ring-emerald-500 ${
+                    copied
+                      ? 'border-emerald-600 bg-emerald-900/60 text-emerald-200'
+                      : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100'
+                  }`}
+                >
+                  {copied ? <CheckCircle2 className="h-3 w-3" /> : <Link2 className="h-3 w-3" />}
+                  {copied ? ' copied' : ' copy link'}
                 </button>
               </div>
               <DialogDescription className="text-[11px] font-mono text-slate-500">

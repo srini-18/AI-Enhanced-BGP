@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SimEvent } from '@/lib/bgp-sim/types';
+import { Input } from '@/components/ui/input';
+import { Search, X } from 'lucide-react';
 
 const LEVEL_STYLE: Record<SimEvent['level'], { text: string; prefix: string }> = {
   info: { text: 'text-slate-400', prefix: '·' },
@@ -30,6 +32,8 @@ export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const [active, setActive] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -51,10 +55,13 @@ export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?
     }
   }, [events]);
 
-  const visible = useMemo(
-    () => (active.size === 0 ? events : events.filter((e) => active.has(e.source))),
-    [events, active]
-  );
+  const visible = useMemo(() => {
+    let list = events;
+    if (active.size > 0) list = list.filter((e) => active.has(e.source));
+    const q = query.trim().toLowerCase();
+    if (q) list = list.filter((e) => e.message.toLowerCase().includes(q));
+    return list;
+  }, [events, active, query]);
 
   const toggle = (src: string) => {
     setActive((prev) => {
@@ -79,6 +86,33 @@ export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?
           </span>
         )}
         <span className="ml-auto flex items-center gap-1" role="group" aria-label="event source filter">
+          <span className="relative w-24 sm:w-32 focus-within:w-40 transition-all">
+            <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-600 pointer-events-none" />
+            <Input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  if (query) setQuery('');
+                  else searchRef.current?.blur();
+                }
+              }}
+              placeholder="grep…"
+              aria-label="search event messages"
+              className="h-6 pl-6 pr-5 text-[10px] font-mono bg-slate-950 border-slate-800 placeholder:text-slate-600 focus-visible:ring-1 focus-visible:ring-emerald-600"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                aria-label="clear event search"
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-300"
+              >
+                <X className="h-2.5 w-2.5" />
+              </button>
+            )}
+          </span>
           {FILTER_SOURCES.map((src) => {
             const on = active.has(src);
             return (
@@ -97,11 +131,14 @@ export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?
               </button>
             );
           })}
-          {active.size > 0 && (
+          {(active.size > 0 || query) && (
             <button
-              onClick={() => setActive(new Set())}
+              onClick={() => {
+                setActive(new Set());
+                setQuery('');
+              }}
               className="px-1.5 py-px rounded-full border border-slate-800 text-[8.5px] font-mono text-slate-500 hover:text-slate-300 leading-relaxed"
-              title="clear filters"
+              title="clear search + source filters"
             >
               clear
             </button>
@@ -117,17 +154,32 @@ export function EventLog({ events, simTime = 0 }: { events: SimEvent[]; simTime?
         {events.length === 0 && <div className="text-[11px] font-mono text-slate-600">awaiting telemetry…</div>}
         {visible.length === 0 && events.length > 0 && (
           <div className="text-[11px] font-mono text-slate-600">
-            no events match the selected filters — <button onClick={() => setActive(new Set())} className="text-slate-400 underline underline-offset-2">clear them</button> to see all
+            no events match the current filters — <button onClick={() => { setActive(new Set()); setQuery(''); }} className="text-slate-400 underline underline-offset-2">clear them</button> to see all
           </div>
         )}
         {visible.map((e) => {
           const ls = LEVEL_STYLE[e.level];
+          // highlight the search match inside the message body
+          const q = query.trim().toLowerCase();
+          let msgNode: React.ReactNode = e.message;
+          if (q) {
+            const idx = e.message.toLowerCase().indexOf(q);
+            if (idx !== -1) {
+              msgNode = (
+                <>
+                  {e.message.slice(0, idx)}
+                  <mark className="bg-amber-500/25 text-amber-200 rounded-sm px-0.5">{e.message.slice(idx, idx + q.length)}</mark>
+                  {e.message.slice(idx + q.length)}
+                </>
+              );
+            }
+          }
           return (
             <div key={e.id} className="font-mono text-[10.5px] leading-relaxed flex gap-1.5 msg-appear">
               <span className="text-slate-600 shrink-0">{e.t.toFixed(0).padStart(4, ' ')}s</span>
               <span className={`shrink-0 ${ls.text}`}>{ls.prefix}</span>
               <span className={`shrink-0 uppercase ${SOURCE_STYLE[e.source] ?? 'text-slate-500'} w-14 truncate`}>{e.source}</span>
-              <span className={e.level === 'danger' ? 'text-red-300/90' : e.level === 'success' ? 'text-emerald-300/90' : 'text-slate-300/85'}>{e.message}</span>
+              <span className={e.level === 'danger' ? 'text-red-300/90' : e.level === 'success' ? 'text-emerald-300/90' : 'text-slate-300/85'}>{msgNode}</span>
             </div>
           );
         })}
