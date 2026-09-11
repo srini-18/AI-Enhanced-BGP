@@ -166,3 +166,53 @@ Unresolved issues / risks:
 - pkill SIGTERM does not kill bun --hot reliably — always verify with pgrep and use kill -9 for duplicates (two engines binding 3010 can confuse clients)
 - Concurrent cron review sessions still race on the shared engine (resets/injects mid-test) — environmental, not a bug
 - Next-phase candidates: copilot streaming responses, exportable run reports (PDF/HTML), trust-threshold A/B comparator, time-travel event scrubber, sound alerts on quarantine, light theme (if requested)
+
+---
+Task ID: 10
+Agent: main
+Task: QA round + copilot streaming + time-travel scrubber + HTML report export + styling polish
+
+Work Log:
+- QA pass via agent-browser (gateway :81, desktop 1280 + mobile 390):
+  - Both services alive (Next 3000 + single engine PID 10048 on 3010); no console errors on any tab
+  - All 5 tabs render; analytics charts (radar/line/bar) OK; AI copilot LLM answered with live state
+  - QA FINDING (bug): AI copilot input had NO Enter-to-submit — only the ASK button worked
+- FIX: Enter-to-submit added to copilot input (onKeyDown, IME-safe via isComposing check, aria-label added)
+- NEW: Copilot streaming responses (token-by-token)
+  - API: /api/ai-assistant/stream/route.ts — SDK stream:true returns upstream ReadableStream; relays as NDJSON {"delta"} + [DONE]; defensive parsing of OpenAI-style SSE chunks; errors emitted as {"error"}
+  - Client: ai-assistant.tsx reads response.body stream, appends tokens to the last assistant message progressively; blinking stream-cursor + "streaming" badge; "analyzing live state" bubble only until first token; graceful fallback message on stream error
+  - Verified: curl shows 4 delta tokens; browser sampling shows progressive growth (346→669→985→1377 chars); Enter + ASK + suggested prompts all submit
+- NEW: Time-Travel Event Scrubber (src/components/bgp/time-travel.tsx, Analytics tab)
+  - Timeline track: run lifecycle bands (phase-colored segments per S-run), event dot markers (bucket-sampled ≤130, level-colored, clickable → jump to t), violet scrub cursor with glow + ping
+  - Controls: range slider (custom .scrub-range styling), prev/next event step buttons, rewind, LIVE follow toggle, replay play/pause with 4 speeds (5/15/40/100×)
+  - State-at-T reconstruction: runs active at T with phase chips, per-prefix trust bars (from trustHistory ≤ T), events ≤ T filtered stream (clickable), RIB commits count ≤ T
+  - Lint-clean architecture: derived cursor T (following ? simTime : scrubT) instead of effect-sync; replay interval uses latest-value refs (simTimeRef/cursorRef); phase reconstruction from run timestamps (pure phaseAtT)
+  - Verified: scrub to 30% → T=1318s with Δ live readout; replay advances and stops at live edge; LIVE re-follows; VLM visual check passed (bands S2/S5/S4, cursor, trust bars all render)
+- NEW: Exportable HTML Run Report (src/lib/bgp-sim/report.ts + button in Benchmark tab)
+  - buildRunReportHtml(): standalone dark NOC-styled document — header, 5 KPI cards (runs/MSR/avg MTTD/avg MTTM/RIB), per-scenario aggregates, 4-way defense comparison (latest run per scenario), full run log table; HTML-escaped, print stylesheet, no scripts
+  - "HTML report" button next to CSV export in Run Archive; toast confirmation
+  - Verified: generated 6KB report opens in browser — VLM confirmed clean layout (title/KPIs/tables pass)
+- Styling polish (mandatory):
+  - Copilot markdown renderer upgraded: bullet/numbered lists, ### headers, bold/code + bare ASN/prefix/LP token mono highlighting; verified 4-item bullet list renders from live LLM reply
+  - Tab badges: CONTROL ROOM shows red pulsing active-scenario chip; BENCHMARK shows run-count badge; focus-visible rings on all tabs
+  - Route table header: "all stable" / "N anomalous" status pill
+  - Event log: source filter chips (attack/detection/policy/shadow/rollback multi-select + clear + count), empty-filter state, msg-appear entrance animation
+  - Connecting screen: skeleton loading bars + ping dot
+  - Charts: minTickGap on trust chart X-axis, angled MTTD/MTTM bar labels (mobile readability)
+  - globals.css: stream-cursor, msg-in, scrub-ping, .scrub-range thumb styles, prefers-reduced-motion disables decorative animations
+- Fixed lint: 2× react-hooks/set-state-in-effect in time-travel (derived-state + refs pattern)
+- Investigated transient Runtime ReferenceError seen once in browser: dev.log shows it was an OLD mid-write parse error in route-table.tsx (line 250, file is 244 lines now — from a previous session's file write); current file compiles clean, reload healthy, 0 console errors
+- Final E2E verification: S1 full lifecycle with autonomous rollback (run #12 rolledback, MTTD 15s MTTM 20s) and S2 full lifecycle (run #13: inject→detect trust 0.32 MTTD 5s→quarantine→RIB verify→MTTM 10s→withdraw); 53 records in SQLite archive; lint clean; mobile 390px no overflow (verified programmatically at element level)
+
+Stage Summary:
+- Copilot now streams tokens live (Enter-to-submit fixed + progressive rendering)
+- Analytics tab gains time-travel scrubber (replay any t, state reconstruction at T)
+- Benchmark gains standalone HTML report export alongside CSV
+- UI polish: markdown lists, tab status badges, event filters, skeletons, a11y (focus rings, aria, reduced-motion)
+- All 3 top next-phase candidates from round 9 implemented (copilot streaming, HTML reports, time-travel)
+
+Unresolved issues / risks:
+- Concurrent cron review job (every 15 min) still resets/injects mid-manual-test — environmental; clean QA windows are ~14 min after each review pass
+- VLM notes top-nav pipeline pill density is tight at some widths (cosmetic, NOC-intentional)
+- Time-travel phase reconstruction shows 'mitigated' (not 'rolledback') for runs finalized via the withdraw-without-rollback path — correct per engine semantics (rolledBackAt only set when rollback completes while attack tracked)
+- Next-phase candidates: sound alerts on quarantine, copilot conversation export, per-run timeline deep-link (?t=), replay export as video/GIF, light theme (if requested), localization

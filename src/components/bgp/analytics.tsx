@@ -89,7 +89,7 @@ export function AnalyticsPanel({ state }: { state: SimState }) {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 4, right: 12, bottom: 0, left: -14 }}>
               <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-              <XAxis dataKey="t" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} stroke="#334155" tickFormatter={(v: number) => `${v}s`} />
+              <XAxis dataKey="t" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} stroke="#334155" minTickGap={48} tickFormatter={(v: number) => `${v}s`} />
               <YAxis domain={[0, 1]} tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} stroke="#334155" />
               <RTooltip
                 contentStyle={{ background: '#020617', border: '1px solid #334155', borderRadius: 8, fontSize: 11, fontFamily: 'monospace' }}
@@ -130,7 +130,7 @@ export function AnalyticsPanel({ state }: { state: SimState }) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={mttdData} margin={{ top: 4, right: 12, bottom: 0, left: -14 }}>
                 <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9.5, fontFamily: 'monospace' }} stroke="#334155" />
+                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9.5, fontFamily: 'monospace' }} stroke="#334155" interval={0} angle={-25} textAnchor="end" height={44} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} stroke="#334155" />
                 <RTooltip
                   cursor={{ fill: '#1e293b55' }}

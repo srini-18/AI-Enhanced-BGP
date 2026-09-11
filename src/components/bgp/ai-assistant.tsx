@@ -77,33 +77,97 @@ const SUGGESTED = [
   },
 ];
 
+function renderInline(text: string, keyPrefix: string): React.ReactNode {
+  // bold, inline code, and bare ASN/prefix/LP monospace tokens
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\bA[Ss]\d{4,10}\b|\bLP\s?\d+\b|\b\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}\b)/g).filter(Boolean);
+  return parts.map((part, j) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={`${keyPrefix}-${j}`} className="text-slate-100 font-semibold">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code key={`${keyPrefix}-${j}`} className="px-1 py-0.5 rounded bg-slate-800/80 text-emerald-300 font-mono text-[10.5px]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    // bare AS numbers / prefixes / LP values -> subtle mono highlight
+    if (/^(A[Ss]\d{4,10}|LP\s?\d+|\d{1,3}(\.\d{1,3}){3}\/\d{1,2})$/.test(part)) {
+      return (
+        <code key={`${keyPrefix}-${j}`} className="text-cyan-300/90 font-mono text-[10.5px]">
+          {part}
+        </code>
+      );
+    }
+    return <span key={`${keyPrefix}-${j}`}>{part}</span>;
+  });
+}
+
 function renderMarkdown(text: string): React.ReactNode {
-  // minimal markdown: **bold**, `code`, bullets, headers
+  // markdown: **bold**, `code`, bullets (- / *), numbered lists, ### headers, ASN/prefix mono
   const lines = text.split('\n');
-  return lines.map((line, i) => {
-    const boldParts = line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
-    return (
-      <p key={i} className={line.trim() === '' ? 'h-2' : 'leading-relaxed'}>
-        {boldParts.map((part, j) => {
-          if (part.startsWith('**') && part.endsWith('**')) {
-            return (
-              <strong key={j} className="text-slate-100 font-semibold">
-                {part.slice(2, -2)}
-              </strong>
-            );
-          }
-          if (part.startsWith('`') && part.endsWith('`')) {
-            return (
-              <code key={j} className="px-1 py-0.5 rounded bg-slate-800/80 text-emerald-300 font-mono text-[10.5px]">
-                {part.slice(1, -1)}
-              </code>
-            );
-          }
-          return <span key={j}>{part}</span>;
-        })}
+  const out: React.ReactNode[] = [];
+  let listBuf: string[] = [];
+  let listOrdered = false;
+
+  const flushList = (key: string) => {
+    if (listBuf.length === 0) return;
+    const items = listBuf.map((item, idx) => (
+      <li key={`${key}-${idx}`} className="pl-1 marker:text-violet-400 leading-relaxed">
+        {renderInline(item, `${key}-${idx}`)}
+      </li>
+    ));
+    out.push(
+      listOrdered ? (
+        <ol key={key} className="list-decimal ml-4 space-y-0.5 my-1">
+          {items}
+        </ol>
+      ) : (
+        <ul key={key} className="list-disc ml-4 space-y-0.5 my-1">
+          {items}
+        </ul>
+      )
+    );
+    listBuf = [];
+  };
+
+  lines.forEach((line, i) => {
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+    if (bullet) {
+      if (listOrdered) flushList(`l${i}`);
+      listOrdered = false;
+      listBuf.push(bullet[1]);
+      return;
+    }
+    if (numbered) {
+      if (!listOrdered) flushList(`l${i}`);
+      listOrdered = true;
+      listBuf.push(numbered[2]);
+      return;
+    }
+    flushList(`l${i}`);
+    const header = line.match(/^(#{1,4})\s+(.*)$/);
+    if (header) {
+      out.push(
+        <p key={`h${i}`} className="text-slate-200 font-semibold mt-1.5">
+          {renderInline(header[2], `h${i}`)}
+        </p>
+      );
+      return;
+    }
+    out.push(
+      <p key={`p${i}`} className={line.trim() === '' ? 'h-2' : 'leading-relaxed'}>
+        {renderInline(line, `p${i}`)}
       </p>
     );
   });
+  flushList('l-end');
+  return out;
 }
 
 export function AiAssistantPanel({ state, variantLabel }: { state: SimState; variantLabel: string }) {
@@ -129,10 +193,13 @@ export function AiAssistantPanel({ state, variantLabel }: { state: SimState; var
       setInput('');
       const userMsg: ChatMessage = { role: 'user', content: question, ts: Date.now() };
       const history = [...messages, userMsg];
-      setMessages(history);
+      // seed an empty assistant message — streamed tokens fill it progressively
+      setMessages([...history, { role: 'assistant', content: '', ts: Date.now() }]);
       setBusy(true);
+      let acc = '';
+      let failed: string | null = null;
       try {
-        const res = await fetch('/api/ai-assistant', {
+        const res = await fetch('/api/ai-assistant/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -140,12 +207,47 @@ export function AiAssistantPanel({ state, variantLabel }: { state: SimState; var
             simContext,
           }),
         });
-        const data = await res.json();
-        if (!res.ok || !data.reply) throw new Error(data.error || 'assistant unavailable');
-        setMessages((m) => [...m, { role: 'assistant', content: String(data.reply), ts: Date.now() }]);
+        if (!res.ok || !res.body) throw new Error(`assistant unavailable (${res.status})`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            const l = line.trim();
+            if (!l || l === '[DONE]') continue;
+            try {
+              const obj = JSON.parse(l) as { delta?: string; error?: string };
+              if (obj.error) throw new Error(obj.error);
+              if (obj.delta) acc += obj.delta;
+            } catch (parseErr) {
+              if ((parseErr as Error).message && !(parseErr instanceof SyntaxError)) {
+                failed = (parseErr as Error).message;
+              }
+            }
+          }
+          if (failed) throw new Error(failed);
+          setMessages((m) => {
+            const copy = [...m];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'assistant') copy[copy.length - 1] = { ...last, content: acc };
+            return copy;
+          });
+        }
+        if (!acc.trim()) throw new Error(failed ?? 'empty response');
       } catch (e) {
         setError(String((e as Error).message ?? e));
-        setMessages((m) => [...m, { role: 'assistant', content: '⚠️ copilot error — the analysis service did not respond. Try again.', ts: Date.now() }]);
+        const fallback = '⚠️ copilot error — the analysis service did not respond. Try again.';
+        setMessages((m) => {
+          const copy = [...m];
+          const last = copy[copy.length - 1];
+          if (last && last.role === 'assistant') copy[copy.length - 1] = { ...last, content: fallback };
+          return copy;
+        });
       } finally {
         setBusy(false);
         inputRef.current?.focus();
@@ -203,24 +305,36 @@ export function AiAssistantPanel({ state, variantLabel }: { state: SimState; var
               </p>
             </div>
           )}
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[85%] rounded-lg px-3 py-2 text-[11.5px] ${
-                  m.role === 'user'
-                    ? 'bg-emerald-900/40 border border-emerald-800/60 text-slate-100'
-                    : 'bg-slate-900/70 border border-slate-800 text-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-1 text-[9px] font-mono uppercase tracking-wider opacity-60">
-                  {m.role === 'user' ? <span className="text-emerald-400">operator</span> : <Bot className="h-3 w-3 text-violet-400" />}
-                  {m.role === 'assistant' && <span className="text-violet-400">copilot</span>}
+          {messages.map((m, i) => {
+            const isStreamingLast = busy && m.role === 'assistant' && i === messages.length - 1;
+            if (isStreamingLast && m.content === '') return null; // placeholder replaced by "analyzing" bubble below
+            return (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} msg-appear`}>
+                <div
+                  className={`max-w-[85%] rounded-lg px-3 py-2 text-[11.5px] ${
+                    m.role === 'user'
+                      ? 'bg-emerald-900/40 border border-emerald-800/60 text-slate-100'
+                      : 'bg-slate-900/70 border border-slate-800 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1 text-[9px] font-mono uppercase tracking-wider opacity-60">
+                    {m.role === 'user' ? <span className="text-emerald-400">operator</span> : <Bot className="h-3 w-3 text-violet-400" />}
+                    {m.role === 'assistant' && <span className="text-violet-400">copilot</span>}
+                    {isStreamingLast && (
+                      <span className="ml-auto flex items-center gap-1 text-violet-400">
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" /> streaming
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-sans space-y-1">
+                    {renderMarkdown(m.content)}
+                    {isStreamingLast && <span className="stream-cursor" aria-label="response streaming" />}
+                  </div>
                 </div>
-                <div className="font-sans space-y-1">{renderMarkdown(m.content)}</div>
               </div>
-            </div>
-          ))}
-          {busy && (
+            );
+          })}
+          {busy && messages[messages.length - 1]?.content === '' && (
             <div className="flex justify-start">
               <div className="rounded-lg px-3 py-2 bg-slate-900/70 border border-slate-800 flex items-center gap-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />
@@ -249,7 +363,14 @@ export function AiAssistantPanel({ state, variantLabel }: { state: SimState; var
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="ask about routes, trust scores, mitigation strategy…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              aria-label="ask the AI copilot"
+              placeholder="ask about routes, trust scores, mitigation strategy… (Enter to send)"
               className="flex-1 h-9 rounded-md border border-slate-700 bg-slate-950/80 px-3 text-[11.5px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-700 focus:border-emerald-700"
             />
             <Button

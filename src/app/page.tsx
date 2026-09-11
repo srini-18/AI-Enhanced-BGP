@@ -14,6 +14,7 @@ import { AiAssistantPanel } from '@/components/bgp/ai-assistant';
 import { RibLogViewer } from '@/components/bgp/rib-log';
 import { RouteMapPreview } from '@/components/bgp/route-map-preview';
 import { ScenarioDeepDive } from '@/components/bgp/scenario-deepdive';
+import { TimeTravelScrubber } from '@/components/bgp/time-travel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -261,28 +262,50 @@ export default function Home() {
       {/* Main */}
       <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-4 min-w-0">
         {!state ? (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-            <Layers className="h-10 w-10 text-slate-700 animate-pulse" />
+          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <div className="relative">
+              <Layers className="h-10 w-10 text-slate-700 animate-pulse" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            </div>
             <p className="text-sm font-mono text-slate-500">connecting to BGP simulation engine…</p>
             <p className="text-[11px] font-mono text-slate-600">{connected ? 'handshaking telemetry stream' : 'engine offline — retrying'}</p>
+            <div className="w-full max-w-md space-y-2 mt-2" aria-hidden="true">
+              <div className="h-2.5 rounded bg-slate-900 overflow-hidden"><div className="h-full w-2/3 rounded bg-slate-800 animate-pulse" /></div>
+              <div className="h-2.5 rounded bg-slate-900 overflow-hidden"><div className="h-full w-5/6 rounded bg-slate-800 animate-pulse" style={{ animationDelay: '120ms' }} /></div>
+              <div className="h-2.5 rounded bg-slate-900 overflow-hidden"><div className="h-full w-1/2 rounded bg-slate-800 animate-pulse" style={{ animationDelay: '240ms' }} /></div>
+            </div>
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="bg-slate-900 border border-slate-800 h-9 w-full justify-start overflow-x-auto scrollbar-none rounded-md">
-              <TabsTrigger value="control" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5">
+              <TabsTrigger value="control" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5 focus-visible:ring-1 focus-visible:ring-emerald-600">
                 <SlidersHorizontal className="h-3 w-3 hidden sm:inline-block" /> CONTROL ROOM
+                {state.activeRun && (
+                  <span
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-red-900 bg-red-950/60 text-[8.5px] text-red-300 leading-none"
+                    aria-label="attack active"
+                  >
+                    <span className="w-1 h-1 rounded-full bg-red-500 animate-pulse" />
+                    <span className="hidden sm:inline">{state.activeRun.scenarioId}</span>
+                  </span>
+                )}
               </TabsTrigger>
-              <TabsTrigger value="analytics" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5">
+              <TabsTrigger value="analytics" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5 focus-visible:ring-1 focus-visible:ring-emerald-600">
                 <BarChart3 className="h-3 w-3 hidden sm:inline-block" /> ANALYTICS
               </TabsTrigger>
-              <TabsTrigger value="benchmark" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5">
+              <TabsTrigger value="benchmark" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5 focus-visible:ring-1 focus-visible:ring-emerald-600">
                 <Trophy className="h-3 w-3 hidden sm:inline-block" /> BENCHMARK
+                {state.metrics.totalRuns > 0 && (
+                  <span className="px-1.5 py-px rounded-full border border-slate-700 bg-slate-950/60 text-[8.5px] text-slate-400 leading-none tabular-nums">
+                    {state.metrics.totalRuns}
+                  </span>
+                )}
               </TabsTrigger>
-              <TabsTrigger value="copilot" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-violet-900/60 text-violet-200 gap-1.5 data-[state=active]:text-violet-100">
+              <TabsTrigger value="copilot" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-violet-900/60 text-violet-200 gap-1.5 data-[state=active]:text-violet-100 focus-visible:ring-1 focus-visible:ring-violet-500">
                 <Sparkles className="h-3 w-3 hidden sm:inline-block" /> AI COPILOT
                 <span className="hidden lg:inline-block w-1 h-1 rounded-full bg-violet-400 animate-pulse" />
               </TabsTrigger>
-              <TabsTrigger value="docs" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5">
+              <TabsTrigger value="docs" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5 focus-visible:ring-1 focus-visible:ring-emerald-600">
                 <BookOpen className="h-3 w-3 hidden sm:inline-block" /> ARCHITECTURE
               </TabsTrigger>
             </TabsList>
@@ -315,8 +338,26 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-slate-200">Live RIB / Route Telemetry</span>
+                    <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-200">Live RIB / Route Telemetry</span>
+                        {(() => {
+                          const routes = Object.values(state.routes);
+                          const abnormal = routes.filter((r) => r.status !== 'normal' || r.underOverride).length;
+                          if (abnormal === 0) {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-emerald-900 bg-emerald-950/50 text-[9px] font-mono text-emerald-400 leading-none">
+                                <span className="w-1 h-1 rounded-full bg-emerald-400" /> all stable
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-amber-900 bg-amber-950/50 text-[9px] font-mono text-amber-300 leading-none">
+                              <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" /> {abnormal} anomalous
+                            </span>
+                          );
+                        })()}
+                      </div>
                       <span className="text-[10px] font-mono text-slate-500">{Object.keys(state.routes).length} prefixes · click a route for diagnostics</span>
                     </div>
                     <RouteTable state={state} />
@@ -354,6 +395,9 @@ export default function Home() {
             {/* ANALYTICS */}
             <TabsContent value="analytics" className="mt-3">
               <AnalyticsPanel state={state} />
+              <div className="mt-4">
+                <TimeTravelScrubber state={state} />
+              </div>
               <div className="mt-4">
                 <ScenarioDeepDive state={state} />
               </div>

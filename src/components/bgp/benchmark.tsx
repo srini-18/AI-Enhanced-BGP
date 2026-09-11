@@ -5,10 +5,11 @@ import { RunResult, SimState } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History } from 'lucide-react';
+import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History, FileText } from 'lucide-react';
 import { AutoBenchmarkRunner } from './auto-benchmark';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { downloadHtmlReport, ReportRun } from '@/lib/bgp-sim/report';
 
 export interface PersistedRun {
   id: string;
@@ -281,6 +282,22 @@ export function BenchmarkPanel({
               className="h-6 px-2 text-[10px] font-mono border-slate-700 text-slate-400 hover:bg-slate-800"
             >
               <Download className="h-3 w-3 mr-1" /> CSV
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={persisted.length === 0}
+              onClick={() => {
+                const stamp = downloadHtmlReport(persisted as ReportRun[]);
+                toast({
+                  title: 'HTML report exported',
+                  description: `${persisted.length} runs · KPIs, per-scenario aggregates, defense comparison, full log · bgp-run-report-${stamp.slice(0, 10)}.html`,
+                });
+              }}
+              className="h-6 px-2 text-[10px] font-mono border-violet-800 text-violet-300 hover:bg-violet-950/40"
+              title="Download a standalone styled HTML report of the run archive"
+            >
+              <FileText className="h-3 w-3 mr-1" /> HTML report
             </Button>
           </div>
         </div>
