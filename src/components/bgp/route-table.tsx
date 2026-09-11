@@ -58,9 +58,46 @@ export function RouteTable({ state }: { state: SimState }) {
           const isOpen = expanded === r.route.prefix;
           const quarantined = r.underOverride && r.route.locPref === 0;
           return (
-            <div
+            <RouteRow
               key={r.route.prefix}
-              className={`rounded-lg border transition-colors ${
+              r={r}
+              st={st}
+              trust={trust}
+              isOpen={isOpen}
+              quarantined={quarantined}
+              onToggle={() => setExpanded(isOpen ? null : r.route.prefix)}
+              rollbackTicks={state.config.rollback.requiredNormalTicks}
+              simTime={state.simTime}
+            />
+          );
+        })}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+/** route card wrapper that flashes when its status changes (keyed overlay, no effect-state) */
+function RouteRow({
+  r,
+  st,
+  trust,
+  isOpen,
+  quarantined,
+  onToggle,
+}: {
+  r: RouteSnapshot;
+  st: { badge: string; dot: string; label: string };
+  trust: number | undefined;
+  isOpen: boolean;
+  quarantined: boolean;
+  onToggle: () => void;
+  rollbackTicks: number;
+  simTime: number;
+}) {
+  const flashKey = `${r.status}:${r.route.locPref}`;
+  return (
+            <div
+              className={`relative rounded-lg border transition-colors ${
                 quarantined
                   ? 'border-red-800/70 bg-red-950/20'
                   : r.underOverride
@@ -68,9 +105,10 @@ export function RouteTable({ state }: { state: SimState }) {
                     : 'border-slate-800 bg-slate-950/50'
               }`}
             >
+              <div key={flashKey} className="pointer-events-none absolute inset-0 rounded-lg status-flash" aria-hidden />
               <button
                 className="w-full text-left p-3"
-                onClick={() => setExpanded(isOpen ? null : r.route.prefix)}
+                onClick={onToggle}
                 aria-expanded={isOpen}
               >
                 <div className="flex items-center gap-2 flex-wrap">
@@ -115,7 +153,7 @@ export function RouteTable({ state }: { state: SimState }) {
                 {!isOpen && (
                   <div className="mt-1.5 flex items-center gap-2 text-[10px] font-mono text-slate-500 truncate">
                     {r.underOverride && r.recoveryStreak > 0 && (
-                      <span className="text-cyan-400">recovery {r.recoveryStreak}/{state.config.rollback.requiredNormalTicks}</span>
+                      <span className="text-cyan-400">recovery {r.recoveryStreak}/{rollbackTicks}</span>
                     )}
                     <span className="truncate">{r.policyAction}</span>
                   </div>
@@ -197,14 +235,10 @@ export function RouteTable({ state }: { state: SimState }) {
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-slate-500">
                     <span>origin AS<span className="text-slate-300 ml-1">{r.route.originAs}</span></span>
                     <span>age<span className="text-slate-300 ml-1">{r.features[7]}s</span></span>
-                    <span>route age raw<span className="text-slate-300 ml-1">{Math.round(state.simTime - r.route.lastUpdateEpoch)}s</span></span>
+                    <span>route age raw<span className="text-slate-300 ml-1">{Math.round(simTime - r.route.lastUpdateEpoch)}s</span></span>
                   </div>
                 </div>
               )}
             </div>
-          );
-        })}
-      </div>
-    </TooltipProvider>
   );
 }

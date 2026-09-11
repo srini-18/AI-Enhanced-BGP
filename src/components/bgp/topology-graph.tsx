@@ -37,6 +37,13 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
   const W = 1120;
   const H = 470;
 
+  // animated telemetry packets along a subset of healthy edges (deterministic pick)
+  const packetEdges = edges
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e.status === 'normal' && e.rel === 'customer-to-provider')
+    .filter((_, idx) => idx % 3 === 0)
+    .slice(0, 6);
+
   return (
     <TooltipProvider delayDuration={80}>
       <div className="relative w-full">
@@ -48,6 +55,13 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
             <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
               <polygon points="0 0, 6 2, 0 4" fill="#64748b" />
             </marker>
+            <filter id="edge-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="2.2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
           </defs>
           <rect width={W} height={H} fill="url(#grid)" rx="8" />
 
@@ -73,6 +87,7 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
                     e.rel === 'peer-to-peer' ? '7 5' : quarantined ? '4 4' : undefined
                   }
                   className={anomalous ? 'animate-pulse' : undefined}
+                  filter={anomalous ? 'url(#edge-glow)' : undefined}
                   markerEnd={e.rel === 'customer-to-provider' ? 'url(#arrowhead)' : undefined}
                 />
                 {anomalous && (
@@ -94,6 +109,26 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
             );
           })}
 
+          {/* animated telemetry packets on healthy transit edges */}
+          {packetEdges.map(({ e, i }) => {
+            const a = nodeMap.get(e.from);
+            const b = nodeMap.get(e.to);
+            if (!a || !b) return null;
+            const dur = 3.2 + (i % 3) * 1.1;
+            const delay = (i * 0.7).toFixed(1);
+            return (
+              <circle key={`pkt-${e.from}-${e.to}`} r="2.6" fill="#38bdf8" opacity="0.85">
+                <animateMotion
+                  dur={`${dur}s`}
+                  begin={`${delay}s`}
+                  repeatCount="indefinite"
+                  path={`M ${a.x} ${a.y} L ${b.x} ${b.y}`}
+                />
+                <animate attributeName="opacity" values="0;0.9;0" dur={`${dur}s`} begin={`${delay}s`} repeatCount="indefinite" />
+              </circle>
+            );
+          })}
+
           {/* nodes */}
           {nodes.map((n) => {
             const v = nodeVisual(n);
@@ -102,7 +137,8 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
             return (
               <Tooltip key={n.asn}>
                 <TooltipTrigger asChild>
-                  <g className="cursor-pointer">
+                  <g className="cursor-pointer transition-opacity hover:opacity-90">
+                    <circle cx={n.x} cy={n.y} r={r + 3} fill="transparent" className="node-hit" />
                     {isDefender && (
                       <circle
                         cx={n.x}
@@ -147,6 +183,7 @@ export function TopologyGraph({ nodes, edges, defenderAs }: Props) {
         <div className="absolute bottom-2 right-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-slate-500">
           <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-slate-600" /> eBGP session</span>
           <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-slate-500" /> peer-to-peer</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" /> telemetry packet</span>
           <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-500" /> anomalous path</span>
           <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" /> quarantined</span>
         </div>

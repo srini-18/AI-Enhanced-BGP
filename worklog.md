@@ -123,3 +123,46 @@ Unresolved issues / risks:
 - Engine hot-reload (bun --hot) resets sim state on engine file edits — expected dev behavior
 - variantLabel shows 'custom' whenever any slider is touched (even if re-touched to default) — cosmetic, could compare against DEFAULT_CONFIG to detect "equivalent to A4"
 - Next-phase candidates: RIB verification log viewer, route-map config preview/export (FRR-style route-map text), per-scenario deep-dive analytics, light/dark theme toggle, copilot streaming responses
+
+---
+Task ID: 9
+Agent: main
+Task: QA round + critical engine timer bug fix + RIB audit log + FRR route-map preview + scenario deep-dive analytics + visual polish
+
+Work Log:
+- QA pass via agent-browser (gateway :81) — found and diagnosed CRITICAL BUG:
+  - Symptom: sim clock frozen (t stuck) while engine reports running=true; reproduced cleanly with rapid interleaved start/pause from two socket clients (interleave-race: running=true t=0 tick=0 after 2.5s)
+  - Root cause: the long-lived engine process (running since 08:50) had been corrupted by repeated bun --hot module swaps during previous round's engine.ts edits — instance/timer linkage broke (stale code serving sockets). Fresh-process isolation tests proved engine logic itself is race-free (start/pause/scheduleTick trace verified correct ordering).
+  - FIX 1: clean engine restart (killed stale PIDs; NOTE: `pkill -f "bun --hot index.ts"` does NOT reliably kill bun --hot processes — must use kill -9)
+  - FIX 2: permanent self-healing watchdog (engine.ts `startWatchdog()`): every 4s checks running + tick progression; if clock frozen >12s → warns + reschedules tick loop. Verified via in-process test: stall injected (timer cleared, running=true) → watchdog detected → healed → ticks resumed (tick 1→3, exit 0). Wired in index.ts.
+  - Interleave race test now PASSES on clean engine (running=true t=15 tick=3)
+- NEW: RIB Verification Log (two-layer commit audit)
+  - Engine: RibLogEntry type (t/prefix/lp/community/attempts/outcome/action), ribLog bounded at 80 entries, recorded on every verify success AND retry-failure, exposed in SimState.ribLog (last 40, newest first); reset clears it
+  - Frontend: rib-log.tsx — collapsible panel in Control Room under route table: stats strip (verified/failed/max-attempts/configured failure-rate), pass-rate badge, retried count, scrollable table with LP tone coloring + attempt badge
+  - Verified live: S2 commit row `20s | 192.0.2.0/25 | LP 0 | no-export | 1× | Quarantine` and S4 run showed 7 commits, 100% pass
+- NEW: Live Route-Map Preview (FRR-style, route-map-preview.tsx)
+  - Generates full FRRouting config text from live policy config: community-list, trust-tier route-map permits (LP values from sliders), deny-all fallback, shadow/hysteresis comments, router bgp block with route-map attachment + RIB verification comments, detector pipeline summary
+  - Collapsible card in Control Room; copy-to-clipboard + .conf download buttons
+  - Verified LIVE-FOLLOWS config: changed LP suspicious 80→75 via control center → preview instantly showed `permit 75`
+- NEW: Per-Scenario Deep-Dive (scenario-deepdive.tsx, Analytics tab)
+  - Aggregates history+active run per scenario: runs, detected%, MSR%, avg/best/worst MTTD, avg MTTM, per-defense comparison counts
+  - Radar chart (recharts): detection-rate axes per defense (AI Control/Heuristics/RPKI/Std BGP), one radar series per scenario, selected scenario highlighted (fill 0.35 + strokeWidth 2), scenario chip selector
+  - VLM verified radar renders correctly
+- Styling polish:
+  - Topology graph: animated telemetry packets (SVG animateMotion dots flowing along healthy c2p edges with fade in/out), edge-glow SVG filter on anomalous/quarantined edges, node hover glow (hit-area circle fill), legend updated with packet marker — VLM confirmed packets + glow visible
+  - Attack panel: attack-card CSS class (hover lift + active red glow ring shadow)
+  - Route table: status-change flash — keyed overlay div replays status-flash animation whenever status/LP changes (lint-friendly, no effect-state); rows show 4 flash overlays during S4 lifecycle
+  - globals.css: node-hit hover, attack-card, status-flash keyframes, top-accent utilities
+- Fixed lint: react-hooks/preserve-manual-memoization (scenario-deepdive useMemo → direct compute), set-state-in-effect (flash → keyed overlay)
+- Final verification: lint clean; single engine process (10048) with watchdog; 45 runs in DB archive; no console errors; mobile 390px no overflow; all 5 tabs + new panels render
+
+Stage Summary:
+- Critical stuck-timer bug root-caused and permanently fixed with self-healing watchdog
+- All 4 next-phase candidates from previous round implemented: RIB log viewer, route-map preview/export, per-scenario deep-dive, (light/dark theme skipped by design — NOC dark theme is intentional)
+- Control Room now: topology + route table + RIB audit log + route-map preview; Analytics now: metrics + trust chart + MTTD/MTTM bars + scenario deep-dive radar
+
+Unresolved issues / risks:
+- bun --hot module-swap corruption risk remains for the ENGINE process after engine.ts edits — mitigate by restarting the engine service after any engine code change (kill -9 + fresh start); the watchdog now self-heals timer loss but a full restart is still cleaner
+- pkill SIGTERM does not kill bun --hot reliably — always verify with pgrep and use kill -9 for duplicates (two engines binding 3010 can confuse clients)
+- Concurrent cron review sessions still race on the shared engine (resets/injects mid-test) — environmental, not a bug
+- Next-phase candidates: copilot streaming responses, exportable run reports (PDF/HTML), trust-threshold A/B comparator, time-travel event scrubber, sound alerts on quarantine, light theme (if requested)

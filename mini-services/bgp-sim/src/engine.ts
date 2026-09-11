@@ -7,6 +7,7 @@ import {
   FEATURE_NAMES,
   FeatureVector,
   MLResult,
+  RibLogEntry,
   RunResult,
   RouteSnapshot,
   RouteState,
@@ -98,6 +99,35 @@ function deepMerge<T>(base: T, patch: unknown): T {
   return out as T;
 }
 
+/**
+ * Safety-net watchdog: detects a stalled controller loop (running but no ticks
+ * for a while — e.g. after a hot module swap or an unexpected timer loss) and
+ * reschedules it automatically. Runs for the engine's entire lifetime.
+ */
+export function startWatchdog(getEngine: () => BGPSimEngine | null): ReturnType<typeof setInterval> {
+  let lastTick = -1;
+  let lastAdvance = Date.now();
+  return setInterval(() => {
+    const e = getEngine();
+    if (!e) return;
+    if (!e.running) {
+      lastTick = -1;
+      return;
+    }
+    if (e.tick !== lastTick) {
+      lastTick = e.tick;
+      lastAdvance = Date.now();
+      return;
+    }
+    // running but clock frozen for > 12s (many tick intervals) — self-heal
+    if (Date.now() - lastAdvance > 12_000) {
+      console.warn('[bgp-sim] watchdog: controller loop stalled while running — rescheduling');
+      e.rescheduleLoop();
+      lastAdvance = Date.now();
+    }
+  }, 4_000);
+}
+
 export class BGPSimEngine {
   config: SimConfig = clone(DEFAULT_CONFIG);
   simTime = 0;
@@ -114,6 +144,8 @@ export class BGPSimEngine {
   private events: SimEvent[] = [];
   private trustHistory: TrustPoint[] = [];
   private history: RunResult[] = [];
+  private ribLog: RibLogEntry[] = [];
+  private ribLogSeq = 1;
   private activeAttack: ActiveAttack | null = null;
   private nodeStatus = new Map<number, SimNode['status']>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -187,6 +219,7 @@ export class BGPSimEngine {
     this.history = [];
     this.events = [];
     this.trustHistory = [];
+    this.ribLog = [];
     this.nodeStatus.clear();
     this.resetRoutes();
     this.log('info', 'system', 'Simulation reset to clean 10-AS baseline state.');
@@ -218,6 +251,13 @@ export class BGPSimEngine {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /** watchdog entry point: force-reschedule the tick loop (keeps running flag) */
+  rescheduleLoop() {
+    if (!this.running) return;
+    this.scheduleTick();
+    this.emit();
   }
 
   private scheduleTick() {
@@ -952,21 +992,29 @@ export class BGPSimEngine {
       if (!pend) continue;
       if (this.tick < pend.dueTick) continue;
       const ok = this.rng() >= this.config.ribVerification.failureRate;
+      const action =
+        pend.lp === this.config.policy.lpHijack
+          ? `Quarantine (LocalPref ${pend.lp} + ${pend.community ?? 'no-export'})`
+          : `Deprioritization (LocalPref ${pend.lp})`;
       if (ok) {
         rt.ribPending = null;
         rt.ribVerifiedLp = pend.lp;
+        this.pushRibLog({ t: this.simTime, prefix: rt.prefix, lp: pend.lp, community: pend.community, attempts: pend.attempts, outcome: 'verified', action });
         this.log('success', 'policy', `[${rt.prefix}] RIB best-path verified: LocalPref=${pend.lp}${pend.community ? `, community=${pend.community}` : ''} committed to FIB.`);
-        const action =
-          pend.lp === this.config.policy.lpHijack
-            ? `Quarantine (LocalPref ${pend.lp} + ${pend.community ?? 'no-export'})`
-            : `Deprioritization (LocalPref ${pend.lp})`;
         this.recordMitigation(rt, pend.lp, pend.community, action, true);
       } else {
         pend.attempts += 1;
         pend.dueTick = this.tick + 1;
+        this.pushRibLog({ t: this.simTime, prefix: rt.prefix, lp: pend.lp, community: pend.community, attempts: pend.attempts, outcome: 'failed', action });
         this.log('danger', 'policy', `[${rt.prefix}] RIB best-path verification FAILED (attempt ${pend.attempts}) — re-applying route-map.`);
       }
     }
+  }
+
+  /** append to the structured RIB audit log (bounded) */
+  private pushRibLog(e: Omit<RibLogEntry, 'id'>) {
+    this.ribLog.push({ id: this.ribLogSeq++, ...e });
+    if (this.ribLog.length > 80) this.ribLog.splice(0, this.ribLog.length - 80);
   }
 
   private recordMitigation(rt: PrefixRuntime, lp: number, community: string | null, action: string, verified: boolean) {
@@ -1121,6 +1169,7 @@ export class BGPSimEngine {
       history: clone(this.history.slice(-14)).reverse(),
       trustHistory: this.trustHistory.slice(-360),
       events: this.events.slice(-70),
+      ribLog: clone(this.ribLog.slice(-40)).reverse(),
       metrics,
     };
   }

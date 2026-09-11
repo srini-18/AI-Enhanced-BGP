@@ -1,6 +1,6 @@
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { BGPSimEngine } from './src/engine';
+import { BGPSimEngine, startWatchdog } from './src/engine';
 import { ATTACK_SCENARIOS, SimState } from './src/types';
 
 const httpServer = createServer((req, res) => {
@@ -18,6 +18,9 @@ const io = new Server(httpServer, {
 });
 
 const engine = new BGPSimEngine();
+
+// stalled-loop watchdog: self-heals the tick timer if it ever dies while running
+startWatchdog(() => engine);
 
 let lastState: SimState = engine.buildState();
 engine.setOnChange((state) => {

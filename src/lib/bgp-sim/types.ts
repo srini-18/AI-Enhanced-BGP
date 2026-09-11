@@ -215,6 +215,18 @@ export interface SimEvent {
   message: string;
 }
 
+/** Structured RIB two-layer verification audit entry */
+export interface RibLogEntry {
+  id: number;
+  t: number; // sim seconds
+  prefix: string;
+  lp: number;
+  community: string | null;
+  attempts: number;
+  outcome: 'verified' | 'failed';
+  action: string; // policy action name at commit time
+}
+
 export interface SimState {
   simTime: number;
   running: boolean;
@@ -229,6 +241,7 @@ export interface SimState {
   history: RunResult[];
   trustHistory: TrustPoint[];
   events: SimEvent[];
+  ribLog: RibLogEntry[];
   metrics: {
     totalRuns: number;
     avgMttd: number | null;

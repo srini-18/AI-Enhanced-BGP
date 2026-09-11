@@ -11,6 +11,9 @@ import { EventLog } from '@/components/bgp/event-log';
 import { AnalyticsPanel } from '@/components/bgp/analytics';
 import { BenchmarkPanel } from '@/components/bgp/benchmark';
 import { AiAssistantPanel } from '@/components/bgp/ai-assistant';
+import { RibLogViewer } from '@/components/bgp/rib-log';
+import { RouteMapPreview } from '@/components/bgp/route-map-preview';
+import { ScenarioDeepDive } from '@/components/bgp/scenario-deepdive';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -318,6 +321,10 @@ export default function Home() {
                     </div>
                     <RouteTable state={state} />
                   </div>
+
+                  <RibLogViewer state={state} />
+
+                  <RouteMapPreview config={state.config} />
                 </div>
 
                 <div className="space-y-4 xl:sticky xl:top-28">
@@ -347,6 +354,9 @@ export default function Home() {
             {/* ANALYTICS */}
             <TabsContent value="analytics" className="mt-3">
               <AnalyticsPanel state={state} />
+              <div className="mt-4">
+                <ScenarioDeepDive state={state} />
+              </div>
             </TabsContent>
 
             {/* BENCHMARK */}

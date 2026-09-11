@@ -85,9 +85,9 @@ export function AttackPanel({ activeScenarioId, onInject, onWithdraw, onCustom }
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => onInject(s.id)}
-                    className={`w-full text-left rounded-lg border p-2.5 transition-all group ${
+                    className={`attack-card w-full text-left rounded-lg border p-2.5 group ${
                       active
-                        ? 'border-red-500 bg-red-950/40 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
+                        ? 'attack-card-active border-red-500 bg-red-950/40'
                         : 'border-slate-800 bg-slate-950/60 hover:border-slate-600'
                     }`}
                   >
