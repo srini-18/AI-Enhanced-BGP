@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  FileDown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -43,6 +44,7 @@ import {
   Area,
   CartesianGrid,
 } from 'recharts';
+import { downloadForensicReport } from '@/lib/bgp-sim/report';
 
 const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
   normal: { badge: 'border-emerald-800 bg-emerald-950/60 text-emerald-300', dot: 'bg-emerald-400', label: 'NORMAL' },
@@ -142,6 +144,53 @@ export function PrefixDrilldown({
 
   const chartData = trustHistory.map((p) => ({ t: p.t, trust: p.trust }));
 
+  /** newest run touching this prefix — drives the forensic export */
+  const newestRun = runs.length > 0 ? runs.reduce((a, b) => (a.injectedAt >= b.injectedAt ? a : b)) : null;
+
+  const exportForensic = () => {
+    if (!prefix) return;
+    const stamp = downloadForensicReport({
+      prefix,
+      run: newestRun
+        ? {
+            runId: newestRun.runId,
+            scenarioId: newestRun.scenarioId,
+            scenarioName: newestRun.scenarioName,
+            variantLabel: null,
+            mttd: newestRun.mttd,
+            mttm: newestRun.mttm,
+            msr: newestRun.msr,
+            ribVerified: newestRun.ribVerified,
+            appliedPolicy: newestRun.appliedPolicy,
+            phase: newestRun.phase,
+            createdAt: new Date().toISOString(),
+            comparison: newestRun.comparison,
+            injectedAt: newestRun.injectedAt,
+            detectedAt: newestRun.detectedAt,
+            mitigatedAt: newestRun.mitigatedAt,
+            rolledBackAt: newestRun.rolledBackAt,
+            groundTruth: newestRun.groundTruth,
+          }
+        : null,
+      routeStatus: r?.status ?? 'withdrawn',
+      trustScore: trust?.score ?? null,
+      trustHistory: trustHistory.map((p) => ({ t: p.t, trust: p.trust })),
+      events: events.slice().reverse().map((e) => ({ t: e.t, level: e.level, source: e.source, message: e.message })),
+      ribEntries: ribEntries.map((e) => ({
+        t: e.t,
+        lp: e.lp,
+        community: e.community,
+        attempts: e.attempts,
+        outcome: e.outcome,
+        action: e.action,
+      })),
+      featureVector: r?.features ?? null,
+      featureNames: FEATURE_NAMES,
+      simTime: state.simTime,
+    });
+    return stamp;
+  };
+
   return (
     <Dialog open={prefix !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto bg-slate-950 border-slate-800 text-slate-200 p-0">
@@ -173,6 +222,17 @@ export function PrefixDrilldown({
                   {runs.length > 0 ? `${runs.length} run(s) · ` : ''}
                   {events.length} events · {ribEntries.length} RIB commits · {trustHistory.length} τ samples
                 </span>
+                <button
+                  onClick={() => {
+                    exportForensic();
+                  }}
+                  disabled={events.length === 0 && trustHistory.length === 0}
+                  title="download a standalone forensic HTML report for this prefix (run KPIs, defense comparison, trust trajectory, event timeline, RIB audit, feature vector)"
+                  aria-label="export forensic report for this prefix"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-emerald-800 bg-emerald-950/50 text-[9px] font-mono text-emerald-300 hover:bg-emerald-900/50 transition-colors disabled:opacity-40 focus-visible:ring-1 focus-visible:ring-emerald-500"
+                >
+                  <FileDown className="h-3 w-3" /> export report
+                </button>
               </div>
               <DialogDescription className="text-[11px] font-mono text-slate-500">
                 full per-prefix forensics — trust decomposition, trajectory, run lifecycle, event stream & RIB audit

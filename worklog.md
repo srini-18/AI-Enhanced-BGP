@@ -406,3 +406,51 @@ Unresolved issues / risks:
 - A0 arm takes ~25s real (undetected until auto-withdraw); full A/B experiment ~60-90s real — consider a 'fast mode' (shorter durationSec injection) next round if operators want quicker iteration
 - VLM token still unavailable (401) — DOM-geometry checks used instead
 - Next-phase candidates: A/B fast mode, copilot streaming table progressive render, exportable PDF run reports (HTML report exists), per-prefix deep-link URL params, GIF/video replay export, scenario randomizer for soak testing, light theme (if requested)
+
+---
+Task ID: 16
+Agent: main
+Task: QA baseline round + mandatory feature round (A/B fast modes, Chaos Drill soak test, per-prefix forensic report export) + styling polish + full verification
+
+Work Log:
+- Read worklog (15 prior rounds); both services alive at start (Next 3000 + engine 3010 handshake 200; single bun --hot PID 1243). The "port 3010 in use" error in /tmp/bgp-sim.log was from a duplicate-start attempt — live process is healthy
+- Baseline QA via agent-browser (fresh browser session after learning console buffer accumulates stale errors):
+  - All 5 tabs render, socket LINK, clock ticking, S2 lifecycle verified (run #14: MTTD 5s, MTTM 15s, MSR ✓, RIB verified, persisted to SQLite with 4-defense comparison), Analytics 12 charts + radar + time-travel + Variant Performance (81 runs · 4 variants), Benchmark A/B lab, Copilot renders with live ctx
+  - Lint clean (exit 0); mobile 390px no overflow; 0 console errors on FRESH browser session (two "Parsing ecmascript source code failed" errors in the buffer were historical mid-write artifacts from previous sessions — verified current files compile clean; key QA learning: restart the browser (agent-browser close + open) to clear the persistent console buffer before trusting error counts)
+  - Baseline clean → mandatory feature round (3 new features)
+- NEW FEATURE 1: A/B Laboratory fast modes (ablation-lab.tsx)
+  - LAB_SPEEDS: 1× paper (default durations, 150s timeout) / 2× fast (60s injection, 90s timeout) / 4× turbo (45s injection, 70s timeout) — radiogroup speed selector (cyan), speed hint strip with Gauge icon; experiment.start() takes speed; onInject now passes durationSec (engine's attack:inject already supported it); ARM_TIMEOUT_MS replaced by per-speed armTimeoutMs
+  - VERIFIED LIVE: turbo A0 vs A4 S2 completed in ~35s real (was 60-90s) — A0 undetected (run #15) vs A4 mitigated MTTD 5s/MTTM 10s RIB ✓ (run #16), ★ wins glow, verdict "time-to-detect 5s vs ∞", config restored to "matches A4 baseline"
+- NEW FEATURE 2: Chaos Drill · Soak Test (src/components/bgp/chaos-drill.tsx, ~510 lines — useChaosDrill hook + ChaosDrill view)
+  - Page-level state machine (survives tab switches like ablation): randomized scenario sequence (mixed S1-S6 / hijacks S1,S2,S4 / leak pools S5,S6), no immediate repeats, random 45-80s injection durations, run-landing detection via baseline-key snapshot, engine-reset re-arm, 100s round timeout, 6-round default (4/6/10/14 selector)
+  - UI: FIRE DRILL amber button, progress bar + round k/N status, per-round outcome chips (tone-colored), 6-KPI summary (rounds/detection/MSR/avg MTTD/avg MTTM/worst MTTD), per-round detail table with policy + run ref (sticky header, zebra), BENCHMARK tab shows amber CHAOS k/N badge while running
+  - VERIFIED LIVE: 6-round mixed drill completed (~95s real): S4→S2→S6→S2→S3→S5, all runs landed + persisted (#17-#22); summary detection 100%, MSR 100%, avg MTTD 7.5s, worst MTTD 20s (S3); tab badge live; tab-switch survival proven (switched to Control Room mid-drill, drill continued); S3 'failed' phase with MSR ✓ is correct engine semantics (rollback streak reset by flapping → 240s timeout, mitigation+RIB completed)
+  - Calibrated round-time estimate after live measurement (6 rounds ≈ 1-2 min)
+- NEW FEATURE 3: Per-prefix forensic report export (report.ts + prefix-drilldown.tsx)
+  - buildForensicReportHtml/downloadForensicReport in report.ts: standalone dark NOC HTML — header (run/scenario/phase pill/export stamp), 8 KPI cards (MTTD/MTTM/dwell/MSR/RIB/τ-final/policy/sample counts), 4-defense comparison, inline-SVG trust trajectory (tier threshold lines, min marker, last-point marker, gradient area), lifecycle timeline SVG (phase-colored bands + time markers), 10-feature vector table, prefix event timeline (60 max), RIB commit audit
+  - Export button in drilldown modal header (FileDown icon, emerald, disabled without evidence); newest run auto-selected via injectedAt reduce
+  - VERIFIED LIVE: export from 192.0.2.0/24 drilldown produced bgp-forensic-192-0-2-0-24-*.html (16KB live / 11KB sample); content check passed all 9 section assertions; anchor-click capture confirmed download; sample artifact at download/sample-forensic-report.html renders standalone (6 h2 sections, 2 SVGs, 8 KPIs)
+- Styling polish (mandatory):
+  - globals.css: noc-grid-bg upgraded to two-scale grid (28px fine + 140px major) + emerald radial vignette; .panel-accent emerald hairline top; .zebra-rows table striping + hover; .kbd-hint chips; .clock-glow text-shadow; reduced-motion guards extended
+  - page.tsx: clock glow + font-semibold; emerald gradient hairline under header; footer redesigned — 8 pipeline stage chips (rollback highlighted emerald) + kbd-hint shortcut chips (space/R/?) + RFC line; topology card panel-accent
+  - benchmark.tsx: 4-way matrix + run history + SQLite archive tables zebra-rows; matrix panel-accent
+  - ARCHITECTURE tab: 3 new Operator Tooling cards (A/B fast modes, Chaos drill, Forensic export)
+- Verification (all passed):
+  - lint clean (exit 0) after every stage; dev.log no errors; both services alive at end (3000 + 3010 handshake 200)
+  - E2E: turbo A/B (results + restore), 6-round chaos drill (KPIs + persistence), forensic export (content + download + standalone render)
+  - Fresh browser session: 0 console errors; mobile 390px no overflow (both Control Room + Benchmark); panel stacking geometry verified (A/B 226px above chaos 179px, no overlap); styling classes present in DOM (gridBg radial, panelAccent, zebraRows ×3, clockGlow, hairlines ×2)
+  - 4 screenshots archived: qa-round16-{control,benchmark-chaos,mobile,forensic-report}.png
+- VLM attempted per skill instructions — still failing (SDK vision request error, same as rounds 14/15); DOM-geometry + content assertions used instead
+
+Stage Summary:
+- 3 new features shipped: A/B fast modes (turbo experiment ~35s), Chaos Drill randomized soak testing (page-level state machine, live KPIs), per-prefix forensic HTML export (standalone report with inline SVG charts)
+- Styling: two-scale NOC grid + vignette background, emerald hairlines (header/footer/panels), zebra tables, kbd-hint chips, clock glow, richer footer, 3 new docs cards
+- Baseline was bug-free this round (fresh-session console methodology established)
+
+Unresolved issues / risks:
+- agent-browser console buffer persists across navigations within a session — stale historical errors mislead QA; ALWAYS restart browser (close + open) before counting errors
+- VLM token still unavailable (3rd consecutive round) — retry next session
+- Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
+- Chaos drill results are client-state (reset on reload — runs persist in engine history/SQLite; by design)
+- Chaos/A-B foreign-run misaturation risk if the 15-min cron reviewer injects the SAME scenarioId mid-experiment (accepted, same shape as round 15)
+- Next-phase candidates: copilot streaming table progressive render, PDF export of forensic reports (print stylesheet exists — window.print flow), per-prefix deep-link URL params, GIF/video replay export, chaos drill preset randomizer (also randomize config knobs between rounds), light theme (if requested)

@@ -19,6 +19,7 @@ import { ScenarioDeepDive } from '@/components/bgp/scenario-deepdive';
 import { TimeTravelScrubber } from '@/components/bgp/time-travel';
 import { ConfigDiff } from '@/components/bgp/config-diff';
 import { useAblationExperiment } from '@/components/bgp/ablation-lab';
+import { useChaosDrill } from '@/components/bgp/chaos-drill';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -169,6 +170,14 @@ export default function Home() {
     onStart: start,
   });
 
+  // chaos drill state machine — page level, survives tab switches
+  const chaos = useChaosDrill({
+    state,
+    onInject: injectAttack,
+    onWithdraw: withdrawAttack,
+    onStart: start,
+  });
+
   const running = state?.running ?? false;
   const activeRun = state?.activeRun ?? null;
   // server-tracked config variant label (engine updates it on preset/edit/reset)
@@ -309,7 +318,7 @@ export default function Home() {
               </span>
               {state && <ThreatCondition state={state} />}
               <span className="text-slate-500">t=</span>
-              <span className="text-emerald-300 w-16 tabular-nums">{(state?.simTime ?? 0).toFixed(0)}s</span>
+              <span className="text-emerald-300 w-16 tabular-nums clock-glow font-semibold">{(state?.simTime ?? 0).toFixed(0)}s</span>
               <span className="text-slate-600">tick {state?.tick ?? 0}</span>
               <span className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-violet-900/60 text-violet-300 bg-violet-950/40">
                 {variantLabel}
@@ -398,6 +407,8 @@ export default function Home() {
           </div>
         )}
       </header>
+      {/* emerald hairline under the header */}
+      <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
 
       {/* shortcut overlay */}
       {showShortcuts && (
@@ -472,7 +483,17 @@ export default function Home() {
                     <span className="hidden sm:inline">A/B</span>
                   </span>
                 )}
-                {state.metrics.totalRuns > 0 && !['arm-a', 'run-a', 'arm-b', 'run-b'].includes(ablation.phase) && (
+                {chaos.phase === 'running' && (
+                  <span
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-amber-700 bg-amber-950/60 text-[8.5px] text-amber-300 leading-none"
+                    aria-label="chaos drill running"
+                    title={`Chaos drill running — round ${chaos.current}/${chaos.totalRounds}`}
+                  >
+                    <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="hidden sm:inline">CHAOS {Math.min(chaos.current, chaos.totalRounds)}/{chaos.totalRounds}</span>
+                  </span>
+                )}
+                {state.metrics.totalRuns > 0 && !['arm-a', 'run-a', 'arm-b', 'run-b'].includes(ablation.phase) && chaos.phase !== 'running' && (
                   <span className="px-1.5 py-px rounded-full border border-slate-700 bg-slate-950/60 text-[8.5px] text-slate-400 leading-none tabular-nums">
                     {state.metrics.totalRuns}
                   </span>
@@ -507,7 +528,7 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-4 min-w-0">
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 panel-accent">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-semibold text-slate-200">10-AS Multi-Tier Topology</span>
                       <span className="text-[10px] font-mono text-slate-500">
@@ -620,6 +641,7 @@ export default function Home() {
               <BenchmarkPanel
                 state={state}
                 ablation={ablation}
+                chaos={chaos}
                 onInject={(id) => {
                   injectAttack(id);
                   toast({ title: `Scenario ${id} injected`, description: 'Rogue announcement propagating through the 10-AS testbed.' });
@@ -746,6 +768,9 @@ Historical defenses compared in parallel:
                       ['Attack path overlay', 'topology renders the live hijack propagation path as an animated red flow from origin toward the defender — switches to a blocked ✕ marker when quarantine commits'],
                       ['Ablation A/B laboratory', 'Benchmark tab: controlled experiment — same scenario under two ablation variants back-to-back with side-by-side detection/MTTD/MTTM/MSR comparison; your config is snapshotted and restored'],
                       ['Variant performance archive', 'Analytics tab: detection rate, MSR and mean MTTD/MTTM aggregated per variant across every run ever persisted to SQLite — the long-horizon ablation story'],
+                      ['A/B fast modes', '2×/4× speed selector on the A/B laboratory — shortens the injected attack (60s/45s) so full experiments complete in ~15-40s real time while preserving lifecycle fidelity'],
+                      ['Chaos drill · soak test', 'Benchmark tab: randomized scenario sequence (mixed/hijack/leak pools) fired back-to-back under your live config — per-round forensics, detection/MSR/MTTD KPIs, worst-case tracking; page-level state machine survives tab switches'],
+                      ['Per-prefix forensic export', '⌖ drill-down modal: one-click standalone HTML forensic report — run KPIs, 4-defense comparison, inline-SVG trust trajectory with tier lines, lifecycle timeline bands, event log, RIB audit and the 10-feature vector'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>
@@ -767,11 +792,28 @@ Historical defenses compared in parallel:
 
       {/* Footer */}
       <footer className="mt-auto border-t border-slate-800 bg-slate-950/95">
+        <div className="h-px bg-gradient-to-r from-transparent via-emerald-500/25 to-transparent" aria-hidden="true" />
         <div className="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center gap-3 flex-wrap text-[10px] font-mono text-slate-600">
           <span className="text-slate-400">AI-Enhanced BGP Simulation · v3.0 replica</span>
-          <span className="hidden sm:inline">·</span>
-          <span>telemetry→features→ML→trust→shadow→policy→RIB→rollback</span>
-          <span className="ml-auto hidden md:inline">LocalPref 100/80/50/0 + no-export · Gao-Rexford · RFC 1997/6811/9234</span>
+          <span className="hidden sm:flex items-center gap-1" aria-label="pipeline stages">
+            {['telemetry', 'features', 'ML', 'trust', 'shadow', 'policy', 'RIB', 'rollback'].map((stage, i) => (
+              <React.Fragment key={stage}>
+                {i > 0 && <span className="text-slate-800">→</span>}
+                <span className={`px-1.5 py-px rounded border ${i === 7 ? 'border-emerald-900/60 text-emerald-500/90' : 'border-slate-800 text-slate-500'}`}>
+                  {stage}
+                </span>
+              </React.Fragment>
+            ))}
+          </span>
+          <span className="ml-auto hidden md:flex items-center gap-2">
+            <span className="kbd-hint" aria-hidden="true">space</span>
+            <span className="hidden lg:inline">run</span>
+            <span className="kbd-hint" aria-hidden="true">R</span>
+            <span className="hidden lg:inline">reset</span>
+            <span className="kbd-hint" aria-hidden="true">?</span>
+            <span className="hidden lg:inline">help</span>
+            <span className="hidden xl:inline text-slate-600">· LocalPref 100/80/50/0 + no-export · Gao-Rexford · RFC 1997/6811/9234</span>
+          </span>
         </div>
       </footer>
     </div>

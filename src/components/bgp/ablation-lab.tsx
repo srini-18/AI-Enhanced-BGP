@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Gauge,
 } from 'lucide-react';
 
 export type LabPhase =
@@ -40,12 +41,22 @@ export interface ArmResult {
   timedOut: boolean;
 }
 
+/** experiment speed — fast modes inject shorter attacks so arms complete sooner */
+export type LabSpeed = 'paper' | 'fast' | 'turbo';
+
+export const LAB_SPEEDS: { id: LabSpeed; label: string; hint: string; duration: number | null; timeoutMs: number }[] = [
+  { id: 'paper', label: '1×', hint: 'paper-faithful · full scenario duration (120-150s sim)', duration: null, timeoutMs: 150_000 },
+  { id: 'fast', label: '2×', hint: 'fast · 60s injection — safe for every scenario incl. S4 MTTM 20s', duration: 60, timeoutMs: 90_000 },
+  { id: 'turbo', label: '4×', hint: 'turbo · 45s injection — quickest full-lifecycle comparison', duration: 45, timeoutMs: 70_000 },
+];
+
 export interface AblationExperiment {
   phase: LabPhase;
   resultA: ArmResult | null;
   resultB: ArmResult | null;
   activeArm: 'a' | 'b' | null;
-  start: (variantA: string, variantB: string, scenarioId: string) => void;
+  speed: LabSpeed;
+  start: (variantA: string, variantB: string, scenarioId: string, speed?: LabSpeed) => void;
   cancel: () => void;
 }
 
@@ -69,7 +80,6 @@ const PHASE_LABEL: Record<LabPhase, string> = {
   error: 'ended on timeout',
 };
 
-const ARM_TIMEOUT_MS = 150_000;
 const SETTLE_MS = 2_500;
 
 /**
@@ -92,7 +102,7 @@ export function useAblationExperiment({
   state: SimState | null;
   onApplyPreset: (variant: string) => void;
   onUpdateConfig: (config: SimConfig) => void;
-  onInject: (scenarioId: string) => void;
+  onInject: (scenarioId: string, durationSec?: number) => void;
   onWithdraw: () => void;
   onStart: () => void;
 }): AblationExperiment {
@@ -100,6 +110,7 @@ export function useAblationExperiment({
   const [resultA, setResultA] = useState<ArmResult | null>(null);
   const [resultB, setResultB] = useState<ArmResult | null>(null);
   const [activeArm, setActiveArm] = useState<'a' | 'b' | null>(null);
+  const [speed, setSpeed] = useState<LabSpeed>('paper');
 
   const stateRef = useRef(state);
   useEffect(() => {
@@ -114,6 +125,7 @@ export function useAblationExperiment({
   const baselineKeysRef = useRef<Set<string>>(new Set());
   const historyLenRef = useRef(0);
   const selRef = useRef({ variantA: 'A0', variantB: 'A4', scenarioId: 'S2' });
+  const speedRef = useRef<LabSpeed>('paper');
 
   const setLabPhase = useCallback((p: LabPhase, arm: 'a' | 'b' | null = null) => {
     phaseRef.current = p;
@@ -127,6 +139,7 @@ export function useAblationExperiment({
   const armVariant = useCallback(
     (which: 'a' | 'b') => {
       const { variantA: va, variantB: vb, scenarioId: sid } = selRef.current;
+      const spd = LAB_SPEEDS.find((s) => s.id === speedRef.current) ?? LAB_SPEEDS[0];
       const v = which === 'a' ? va : vb;
       baselineKeysRef.current = new Set((stateRef.current?.history ?? []).map(runKey));
       historyLenRef.current = stateRef.current?.history.length ?? 0;
@@ -135,12 +148,18 @@ export function useAblationExperiment({
       if (stateRef.current && !stateRef.current.running) onStart();
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
-        onInject(sid);
+        // fast modes inject a shorter attack so the arm lands sooner
+        onInject(sid, spd.duration ?? undefined);
         setLabPhase(which === 'a' ? 'run-a' : 'run-b', which);
       }, SETTLE_MS);
       setLabPhase(which === 'a' ? 'arm-a' : 'arm-b', which);
     },
     [onApplyPreset, onInject, onStart, setLabPhase]
+  );
+
+  const armTimeoutMs = useCallback(
+    () => (LAB_SPEEDS.find((s) => s.id === speedRef.current) ?? LAB_SPEEDS[0]).timeoutMs,
+    []
   );
 
   const finishExperiment = useCallback(
@@ -208,8 +227,8 @@ export function useAblationExperiment({
       return;
     }
 
-    // timeout watchdog
-    if (Date.now() - armStartRef.current > ARM_TIMEOUT_MS) {
+    // timeout watchdog (scaled by experiment speed)
+    if (Date.now() - armStartRef.current > armTimeoutMs()) {
       onWithdraw();
       if (which === 'a') {
         setResultA(armRes(null, true));
@@ -238,10 +257,12 @@ export function useAblationExperiment({
   );
 
   const start = useCallback(
-    (variantA: string, variantB: string, scenarioId: string) => {
+    (variantA: string, variantB: string, scenarioId: string, spd: LabSpeed = 'paper') => {
       if (['arm-a', 'run-a', 'arm-b', 'run-b'].includes(phaseRef.current)) return;
       if (variantA === variantB) return;
       selRef.current = { variantA, variantB, scenarioId };
+      speedRef.current = spd;
+      setSpeed(spd);
       const s = stateRef.current;
       savedConfigRef.current = s ? s.config : null;
       savedLabelRef.current = s?.variantLabel ?? 'A4 · Full System';
@@ -258,7 +279,7 @@ export function useAblationExperiment({
     finishExperiment('cancelled');
   }, [onWithdraw, finishExperiment]);
 
-  return { phase, resultA, resultB, activeArm, start, cancel };
+  return { phase, resultA, resultB, activeArm, speed, start, cancel };
 }
 
 /** terminal-phase tone for result cards */
@@ -283,11 +304,13 @@ export function AblationLab({
   state: SimState;
   experiment: AblationExperiment;
 }) {
-  const { phase, resultA, resultB } = experiment;
+  const { phase, resultA, resultB, speed } = experiment;
   // uncommitted selections (kept local so tab switches don't disturb an idle setup)
   const [variantA, setVariantA] = useState('A0');
   const [variantB, setVariantB] = useState('A4');
   const [scenarioId, setScenarioId] = useState('S2');
+  const [speedSel, setSpeedSel] = useState<LabSpeed>('paper');
+  const activeSpeed = LAB_SPEEDS.find((s) => s.id === speed) ?? LAB_SPEEDS[0];
 
   const SCENARIOS = ATTACK_SCENARIOS.filter((s) => s.id !== 'CX');
   const running = ['arm-a', 'run-a', 'arm-b', 'run-b'].includes(phase);
@@ -327,24 +350,58 @@ export function AblationLab({
           <span className="text-xs font-semibold text-slate-200">Ablation A/B Laboratory</span>
           <span className="text-[10px] font-mono text-slate-600 hidden sm:inline">same scenario · two variants · side-by-side</span>
         </div>
-        {running ? (
-          <Button
-            size="sm"
-            onClick={experiment.cancel}
-            className="h-7 font-mono text-[10px] bg-red-900/70 hover:bg-red-800 text-red-100 border border-red-800"
-          >
-            <Square className="h-3 w-3 mr-1" /> ABORT
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            onClick={() => experiment.start(variantA, variantB, scenarioId)}
-            disabled={variantA === variantB}
-            title={variantA === variantB ? 'pick two different variants' : 'run the controlled experiment'}
-            className="h-7 font-mono text-[10px] bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-40"
-          >
-            <Play className="h-3 w-3 mr-1" /> RUN EXPERIMENT
-          </Button>
+        <div className="flex items-center gap-1.5">
+          {/* speed selector — fast modes shorten the injected attack */}
+          <div className="flex items-center rounded border border-slate-800 bg-slate-900/60 p-0.5" role="radiogroup" aria-label="experiment speed">
+            {LAB_SPEEDS.map((s) => {
+              const active = (running ? speed : speedSel) === s.id;
+              return (
+                <button
+                  key={s.id}
+                  role="radio"
+                  aria-checked={active}
+                  disabled={running}
+                  onClick={() => setSpeedSel(s.id)}
+                  title={s.hint}
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono transition-colors disabled:opacity-50 ${
+                    active ? 'bg-cyan-900/60 text-cyan-200 border border-cyan-800' : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          {running ? (
+            <Button
+              size="sm"
+              onClick={experiment.cancel}
+              className="h-7 font-mono text-[10px] bg-red-900/70 hover:bg-red-800 text-red-100 border border-red-800"
+            >
+              <Square className="h-3 w-3 mr-1" /> ABORT
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => experiment.start(variantA, variantB, scenarioId, speedSel)}
+              disabled={variantA === variantB}
+              title={variantA === variantB ? 'pick two different variants' : 'run the controlled experiment'}
+              className="h-7 font-mono text-[10px] bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-40"
+            >
+              <Play className="h-3 w-3 mr-1" /> RUN EXPERIMENT
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* speed hint strip */}
+      <div className="flex items-center gap-2 mb-2 text-[9.5px] font-mono text-slate-500 flex-wrap">
+        <Gauge className="h-3 w-3 text-cyan-400" />
+        <span>
+          speed <span className="text-cyan-300">{activeSpeed.label}</span> — {activeSpeed.hint}
+        </span>
+        {activeSpeed.duration !== null && (
+          <span className="text-slate-600">· injection duration {activeSpeed.duration}s (paper: 120-150s)</span>
         )}
       </div>
 

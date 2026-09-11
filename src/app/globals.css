@@ -157,12 +157,61 @@
   display: none;
 }
 
-/* ---------- subtle grid texture for the NOC background ---------- */
+/* ---------- subtle NOC background: two-scale grid + radial vignette ---------- */
 .noc-grid-bg {
   background-image:
-    linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
-  background-size: 28px 28px;
+    radial-gradient(ellipse 120% 80% at 50% -10%, rgba(16, 185, 129, 0.05), transparent 55%),
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 28px 28px, 28px 28px, 140px 140px, 140px 140px;
+}
+
+/* ---------- emerald hairline accent across panel tops ---------- */
+.panel-accent {
+  position: relative;
+  overflow: hidden;
+}
+.panel-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 5%, rgba(52, 211, 153, 0.35) 30%, rgba(52, 211, 153, 0.08) 70%, transparent 95%);
+  pointer-events: none;
+}
+
+/* ---------- zebra table rows (dense telemetry tables) ---------- */
+.zebra-rows tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.35);
+}
+.zebra-rows tbody tr:hover {
+  background: rgba(30, 41, 59, 0.5);
+}
+
+/* ---------- keyboard hint chips ---------- */
+.kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid #334155;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #020617;
+  color: #6ee7b7;
+  font-size: 9px;
+  font-family: ui-monospace, monospace;
+}
+
+/* ---------- clock glow ---------- */
+.clock-glow {
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
 }
 
 /* ---------- glowing status dot ---------- */
@@ -321,5 +370,9 @@ input[type='range'].scrub-range::-moz-range-thumb {
   }
   .attack-flow {
     stroke-dasharray: none;
+  }
+  .panel-accent::before,
+  .clock-glow {
+    animation: none;
   }
 }

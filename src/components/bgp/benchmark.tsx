@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History, FileText, Clock } from 'lucide-react';
 import { AutoBenchmarkRunner } from './auto-benchmark';
 import { AblationLab, AblationExperiment } from './ablation-lab';
+import { ChaosDrill, ChaosExperiment } from './chaos-drill';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { downloadHtmlReport, ReportRun } from '@/lib/bgp-sim/report';
@@ -77,6 +78,7 @@ export function BenchmarkPanel({
   onStart,
   onJumpToTime,
   ablation,
+  chaos,
 }: {
   state: SimState;
   onInject: (scenarioId: string) => void;
@@ -84,6 +86,7 @@ export function BenchmarkPanel({
   onStart: () => void;
   onJumpToTime: (t: number, label: string) => void;
   ablation: AblationExperiment;
+  chaos: ChaosExperiment;
 }) {
   const { toast } = useToast();
   const history = state.history;
@@ -132,8 +135,11 @@ export function BenchmarkPanel({
       {/* ablation A/B controlled experiment — state machine lives at page level */}
       <AblationLab state={state} experiment={ablation} />
 
+      {/* chaos drill soak test — state machine lives at page level */}
+      <ChaosDrill state={state} experiment={chaos} />
+
       {/* 4-way comparison matrix (live + aggregated) */}
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 panel-accent">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Trophy className="h-4 w-4 text-amber-400" />
@@ -142,7 +148,7 @@ export function BenchmarkPanel({
           <span className="text-[10px] font-mono text-slate-600">aggregated across {history.length + (active ? 1 : 0)} runs</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-[10.5px] font-mono">
+          <table className="w-full text-[10.5px] font-mono zebra-rows">
             <thead>
               <tr className="text-slate-500 border-b border-slate-800">
                 <th className="text-left py-1.5 pr-2 font-medium">Scenario</th>
@@ -210,7 +216,7 @@ export function BenchmarkPanel({
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
         <span className="text-xs font-semibold text-slate-200">Run History (latest 14)</span>
         <ScrollArea className="mt-2 max-h-72 overflow-y-auto">
-          <Table>
+          <Table className="zebra-rows">
             <TableHeader>
               <TableRow className="border-slate-800 hover:bg-transparent">
                 <TableHead className="text-[10px] font-mono text-slate-500 h-8">#</TableHead>
@@ -320,7 +326,7 @@ export function BenchmarkPanel({
           </div>
         </div>
         <ScrollArea className="max-h-64 overflow-y-auto">
-          <Table>
+          <Table className="zebra-rows">
             <TableHeader>
               <TableRow className="border-slate-800 hover:bg-transparent">
                 <TableHead className="text-[10px] font-mono text-slate-500">Timestamp</TableHead>
