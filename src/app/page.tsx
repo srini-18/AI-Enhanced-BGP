@@ -18,6 +18,7 @@ import { RouteMapPreview } from '@/components/bgp/route-map-preview';
 import { ScenarioDeepDive } from '@/components/bgp/scenario-deepdive';
 import { TimeTravelScrubber } from '@/components/bgp/time-travel';
 import { ConfigDiff } from '@/components/bgp/config-diff';
+import { useAblationExperiment } from '@/components/bgp/ablation-lab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -157,6 +158,16 @@ export default function Home() {
   const [jumpTarget, setJumpTarget] = useState<{ t: number; nonce: number } | null>(null);
   // per-prefix drill-down modal (opened from route rows + RIB log)
   const [drillPrefix, setDrillPrefix] = useState<string | null>(null);
+
+  // ablation A/B experiment state machine — page level, survives tab switches
+  const ablation = useAblationExperiment({
+    state,
+    onApplyPreset: applyPreset,
+    onUpdateConfig: updateConfig,
+    onInject: injectAttack,
+    onWithdraw: withdrawAttack,
+    onStart: start,
+  });
 
   const running = state?.running ?? false;
   const activeRun = state?.activeRun ?? null;
@@ -451,7 +462,17 @@ export default function Home() {
               </TabsTrigger>
               <TabsTrigger value="benchmark" className="font-mono text-[9.5px] sm:text-xs px-2 sm:px-3 data-[state=active]:bg-slate-800 text-slate-300 gap-1.5 focus-visible:ring-1 focus-visible:ring-emerald-600">
                 <Trophy className="h-3 w-3 hidden sm:inline-block" /> BENCHMARK
-                {state.metrics.totalRuns > 0 && (
+                {['arm-a', 'run-a', 'arm-b', 'run-b'].includes(ablation.phase) && (
+                  <span
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-violet-800 bg-violet-950/60 text-[8.5px] text-violet-300 leading-none"
+                    aria-label="ablation experiment running"
+                    title={`A/B experiment running — ${ablation.phase}`}
+                  >
+                    <span className="w-1 h-1 rounded-full bg-violet-400 animate-pulse" />
+                    <span className="hidden sm:inline">A/B</span>
+                  </span>
+                )}
+                {state.metrics.totalRuns > 0 && !['arm-a', 'run-a', 'arm-b', 'run-b'].includes(ablation.phase) && (
                   <span className="px-1.5 py-px rounded-full border border-slate-700 bg-slate-950/60 text-[8.5px] text-slate-400 leading-none tabular-nums">
                     {state.metrics.totalRuns}
                   </span>
@@ -598,6 +619,7 @@ export default function Home() {
             <TabsContent value="benchmark" className="mt-3">
               <BenchmarkPanel
                 state={state}
+                ablation={ablation}
                 onInject={(id) => {
                   injectAttack(id);
                   toast({ title: `Scenario ${id} injected`, description: 'Rogue announcement propagating through the 10-AS testbed.' });
@@ -722,6 +744,8 @@ Historical defenses compared in parallel:
                       ['Threat condition level', 'DEFCON-style L5→L1 posture indicator in the header, derived from routes and run phase'],
                       ['Prefix drill-down forensics', '⌖ on any route row (or RIB log prefix) opens a modal: trust decomposition τ = Σ wᵢ·tᵢ, full trajectory chart, run lifecycle timeline, per-prefix event stream and RIB audit'],
                       ['Attack path overlay', 'topology renders the live hijack propagation path as an animated red flow from origin toward the defender — switches to a blocked ✕ marker when quarantine commits'],
+                      ['Ablation A/B laboratory', 'Benchmark tab: controlled experiment — same scenario under two ablation variants back-to-back with side-by-side detection/MTTD/MTTM/MSR comparison; your config is snapshotted and restored'],
+                      ['Variant performance archive', 'Analytics tab: detection rate, MSR and mean MTTD/MTTM aggregated per variant across every run ever persisted to SQLite — the long-horizon ablation story'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>

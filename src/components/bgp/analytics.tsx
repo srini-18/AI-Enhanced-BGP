@@ -16,6 +16,7 @@ import {
   Cell,
 } from 'recharts';
 import { Activity, Gauge, Timer, Percent, TrendingUp, TrendingDown } from 'lucide-react';
+import { VariantPerformance } from './variant-performance';
 
 const PREFIX_COLORS: Record<string, string> = {
   '192.0.2.0/24': '#34d399',
@@ -168,6 +169,9 @@ export function AnalyticsPanel({ state }: { state: SimState }) {
           </div>
         ))}
       </div>
+
+      {/* variant performance from the persisted archive */}
+      <VariantPerformance />
 
       {/* trust over time */}
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">

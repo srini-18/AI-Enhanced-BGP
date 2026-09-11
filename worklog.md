@@ -366,3 +366,43 @@ Unresolved issues / risks:
 - Concurrent cron reviewer still resets the engine every ~15 min (cleared run history mid-test once — environmental; drilldown lifecycle correctly degrades to event/RIB evidence only)
 - CX run lifecycle linking depends on the injection event remaining in the engine's rolling event buffer — if it ages out, the run band disappears (graceful, evidence sections remain)
 - Next-phase candidates: copilot streaming table progressive render, ablation A/B side-by-side comparator (A0 vs A4 same-scenario), exportable PDF run reports, per-prefix deep-link URL params, GIF/video replay export, light theme (if requested)
+
+---
+Task ID: 15
+Agent: main
+Task: QA round + mandatory feature round (Ablation A/B Laboratory with page-level state machine, Variant Performance archive panel) + styling polish + full verification
+
+Work Log:
+- Read worklog (14 prior rounds); both services alive at start (3000 + 3010 handshake 200); next-server RSS 1.42GB monitored all round (OOM risk noted; finished at ~2.7GB system-wide with 1.3GB available — no restart needed)
+- QA baseline via agent-browser through gateway :81: all 5 tabs render, round-14 features intact (attack overlay, drill-down modal all 7 sections, live phase UI, event freshness chip), 12 analytics charts, 0 console errors, mobile 390px no overflow — baseline clean → mandatory feature round
+- NEW FEATURE 1: Ablation A/B Laboratory (src/components/bgp/ablation-lab.tsx — useAblationExperiment hook + AblationLab view, ~590 lines)
+  - Controlled experiment from the paper: pick scenario (S1-S6) + two variants (A0-A4) → applies variant A preset, injects, waits for the run to land in history, then arms variant B, injects again, then restores the operator's original config
+  - Run landing detection: snapshot of history runKeys (runId:injectedAt) before injection — new entry with matching scenarioId = terminal; survives engine resets (history-shrink → re-arm current side)
+  - Config restore: full SimConfig snapshot at start; preset-labeled originals ('A4 preset' / 'A4 · Full System') restore via applyPreset (regex /^A([0-4])(?:\s+preset|\s+·)/), custom configs via setConfig deepMerge (values exact; label truthfully 'custom'); ConfigDiff confirms 'matches A4 baseline' after every experiment
+  - Side-by-side result cards: outcome badge (undetected / mitigated / rolled back / timeout), detection (MTTD + class) vs 'never detected', mitigation (MSR ✓ + MTTM), policy, RIB verified, dwell, run ref; ★ wins glow (emerald shadow ring) on the better variant; violet verdict strip auto-composes the narrative ('A0 never detected it while A4 detected it — time-to-detect 5s vs ∞')
+  - Two-segment progress bar (A amber / B violet), ABORT, 150s per-arm timeout watchdog with re-inject grace
+- CRITICAL ARCHITECTURE FIX (found during QA): first implementation lived inside BenchmarkPanel → Radix Tabs UNMOUNTS inactive TabsContent, so switching tabs mid-experiment killed the state machine (no arm-B, no config restore — engine left on variant B) and results vanished. Refactored: state machine hoisted to useAblationExperiment at PAGE level (survives tab switches), AblationLab is a pure view + local selector state. VERIFIED: switched to Control Room mid-run, experiment continued (advanced to variant B), completed with results + config restored after returning
+- NEW FEATURE 2: Variant Performance · Run Archive (src/components/bgp/variant-performance.tsx, Analytics tab above trust chart)
+  - Aggregates ALL persisted runs from /api/sim-runs (SQLite) by variantLabel: runs, scenario coverage chips, detection-rate + MSR bars (tone-scaled), avg MTTD/MTTM — the long-horizon ablation story that survives engine resets; manual reload button; live: 74 runs · 3 variants (A4 · Full System 38 runs 82%/84% 5.0s/16.1s, A4 preset 20 runs 100%/100%, custom 16 runs 94%/100%)
+- NEW FEATURE 3 (supporting): BENCHMARK tab trigger shows a violet pulsing 'A/B' badge while an experiment is running (run-count badge swaps out) — operators on other tabs see the active experiment
+- Styling polish (mandatory): winner glow ring on result cards, two-segment gradient progress, tone-mapped variant rows (A0 slate → A4 emerald) with run-volume bars, scenario coverage chips, column header grid, verdict strip, responsive 2-col → 6-col stat grid, disabled-state selector chips during runs
+- Verification (all passed):
+  - lint clean (exit 0) after every stage
+  - E2E experiment ×3 (A0 vs A4 S2 ×2, default A0/A4): all completed with correct verdicts, runs #10 (failed/undetected) + #11 (mitigated 5s/10s) visible in Run History; tab-switch survival proven; config restored to 'matches A4 baseline' every time; engine preset label transitions observed (A0 preset → A4)
+  - Variant Performance panel: 74 runs / 3 variants rendered with bars + stats; reload works
+  - 0 console errors throughout; mobile 390px no overflow (Control Room + Benchmark tabs); A/B tab badge visible while running; SQLite INSERT/SELECT flows confirmed in dev.log; engine handshake 200 at end
+  - 6 screenshots archived to /home/z/my-project/download/qa-round15-*.png
+
+Stage Summary:
+- Ablation A/B Laboratory shipped with page-level state machine (the paper's core experiment now one click: A0 vs A4 same scenario, side-by-side forensics)
+- Variant Performance archive panel turns 74 accumulated SQLite runs into per-variant ablation analytics
+- Critical tab-unmount architecture bug caught and fixed during QA (experiment now survives tab switches — verified live)
+- BENCHMARK tab gains live A/B experiment badge
+
+Unresolved issues / risks:
+- A/B experiment foreign-run capture: if the concurrent cron reviewer injects the SAME scenarioId mid-experiment, its run could be misattributed (low probability, same shape — accepted)
+- Custom-config restore leaves variantLabel 'custom' (values exact via deepMerge; ConfigDiff still confirms baseline) — cosmetic only
+- Turbopack next-server memory at ~1.4GB RSS after long uptime — OOM recovery recipe in round 12 notes (setsid /tmp/start-dev.sh &)
+- A0 arm takes ~25s real (undetected until auto-withdraw); full A/B experiment ~60-90s real — consider a 'fast mode' (shorter durationSec injection) next round if operators want quicker iteration
+- VLM token still unavailable (401) — DOM-geometry checks used instead
+- Next-phase candidates: A/B fast mode, copilot streaming table progressive render, exportable PDF run reports (HTML report exists), per-prefix deep-link URL params, GIF/video replay export, scenario randomizer for soak testing, light theme (if requested)

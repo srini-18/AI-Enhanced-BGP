@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History, FileText, Clock } from 'lucide-react';
 import { AutoBenchmarkRunner } from './auto-benchmark';
+import { AblationLab, AblationExperiment } from './ablation-lab';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { downloadHtmlReport, ReportRun } from '@/lib/bgp-sim/report';
@@ -75,12 +76,14 @@ export function BenchmarkPanel({
   onWithdraw,
   onStart,
   onJumpToTime,
+  ablation,
 }: {
   state: SimState;
   onInject: (scenarioId: string) => void;
   onWithdraw: () => void;
   onStart: () => void;
   onJumpToTime: (t: number, label: string) => void;
+  ablation: AblationExperiment;
 }) {
   const { toast } = useToast();
   const history = state.history;
@@ -125,6 +128,9 @@ export function BenchmarkPanel({
     <div className="space-y-4">
       {/* auto-benchmark sweep runner */}
       <AutoBenchmarkRunner state={state} onInject={onInject} onWithdraw={onWithdraw} onStart={onStart} />
+
+      {/* ablation A/B controlled experiment — state machine lives at page level */}
+      <AblationLab state={state} experiment={ablation} />
 
       {/* 4-way comparison matrix (live + aggregated) */}
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
