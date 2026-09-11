@@ -1,7 +1,7 @@
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { BGPSimEngine } from './src/engine';
-import { ATTACK_SCENARIOS, DEFAULT_CONFIG, SimState } from './src/types';
+import { ATTACK_SCENARIOS, SimState } from './src/types';
 
 const httpServer = createServer((req, res) => {
   // lightweight health endpoint
@@ -52,7 +52,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('config:reset', () => {
-    engine.setConfig(DEFAULT_CONFIG);
+    engine.resetConfig();
   });
 
   socket.on('attack:inject', (payload: { scenarioId: string; durationSec?: number }, ack?: (r: { ok: boolean }) => void) => {

@@ -220,6 +220,7 @@ export interface SimState {
   running: boolean;
   tick: number;
   config: SimConfig;
+  variantLabel: string; // server-tracked config variant (preset / custom)
   nodes: SimNode[];
   edges: SimEdge[];
   routes: Record<string, RouteSnapshot>;

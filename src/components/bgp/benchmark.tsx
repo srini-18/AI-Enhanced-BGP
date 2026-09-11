@@ -1,21 +1,55 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { RunResult, SimState } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, XCircle, MinusCircle, Trophy } from 'lucide-react';
+import { CheckCircle2, XCircle, MinusCircle, Trophy, Database, Download, RefreshCw, History } from 'lucide-react';
+import { AutoBenchmarkRunner } from './auto-benchmark';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 
-function phaseBadge(phase: RunResult['phase']) {
+export interface PersistedRun {
+  id: string;
+  runId: number;
+  scenarioId: string;
+  scenarioName: string;
+  variantLabel: string | null;
+  mttd: number | null;
+  mttm: number | null;
+  msr: boolean;
+  ribVerified: boolean;
+  appliedPolicy: string;
+  phase: string;
+  createdAt: string;
+  comparison: Record<string, { detected: boolean; mttd: number | null; mitigated: boolean }>;
+}
+
+function phaseBadge(phase: RunResult['phase'] | string) {
   const map: Record<string, string> = {
     injected: 'border-slate-700 text-slate-400',
     detected: 'border-amber-800 text-amber-300 bg-amber-950/40',
     mitigated: 'border-orange-800 text-orange-300 bg-orange-950/40',
     rolledback: 'border-emerald-800 text-emerald-300 bg-emerald-950/40',
     failed: 'border-red-900 text-red-400 bg-red-950/40',
+    timeout: 'border-red-900 text-red-400 bg-red-950/40',
   };
   return map[phase] ?? 'border-slate-700 text-slate-400';
+}
+
+function toCsv(runs: PersistedRun[]): string {
+  const header = ['createdAt', 'runId', 'scenarioId', 'scenarioName', 'variant', 'phase', 'mttd', 'mttm', 'msr', 'ribVerified', 'appliedPolicy'];
+  const esc = (v: unknown) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = runs.map((r) =>
+    [r.createdAt, r.runId, r.scenarioId, r.scenarioName, r.variantLabel ?? 'custom', r.phase, r.mttd ?? '', r.mttm ?? '', r.msr ? 1 : 0, r.ribVerified ? 1 : 0, r.appliedPolicy]
+      .map(esc)
+      .join(',')
+  );
+  return [header.join(','), ...rows].join('\n');
 }
 
 function ComparisonCell({ d }: { d: { detected: boolean; mttd: number | null; mitigated: boolean } | undefined }) {
@@ -34,9 +68,39 @@ function ComparisonCell({ d }: { d: { detected: boolean; mttd: number | null; mi
   );
 }
 
-export function BenchmarkPanel({ state }: { state: SimState }) {
+export function BenchmarkPanel({
+  state,
+  onInject,
+  onWithdraw,
+  onStart,
+}: {
+  state: SimState;
+  onInject: (scenarioId: string) => void;
+  onWithdraw: () => void;
+  onStart: () => void;
+}) {
+  const { toast } = useToast();
   const history = state.history;
   const active = state.activeRun;
+  const [persisted, setPersisted] = useState<PersistedRun[]>([]);
+  const [loadingDb, setLoadingDb] = useState(false);
+
+  const loadPersisted = async () => {
+    setLoadingDb(true);
+    try {
+      const res = await fetch('/api/sim-runs');
+      const data = await res.json();
+      if (res.ok) setPersisted(data.runs ?? []);
+    } catch {
+      /* silent */
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPersisted();
+  }, [state.history.length]);
 
   // aggregate per scenario across runs
   const agg = new Map<string, { runs: number; detected: number; msr: number; mttds: number[]; mttms: number[] }>();
@@ -56,6 +120,9 @@ export function BenchmarkPanel({ state }: { state: SimState }) {
 
   return (
     <div className="space-y-4">
+      {/* auto-benchmark sweep runner */}
+      <AutoBenchmarkRunner state={state} onInject={onInject} onWithdraw={onWithdraw} onStart={onStart} />
+
       {/* 4-way comparison matrix (live + aggregated) */}
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
         <div className="flex items-center justify-between mb-2">
@@ -170,6 +237,93 @@ export function BenchmarkPanel({ state }: { state: SimState }) {
                 <TableRow>
                   <TableCell colSpan={8} className="text-center text-[11px] font-mono text-slate-600 py-6">
                     no completed runs
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      </div>
+
+      {/* persisted run archive (SQLite via Prisma) */}
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4 text-violet-400" />
+            <span className="text-xs font-semibold text-slate-200">Run Archive (SQLite)</span>
+            <span className="text-[10px] font-mono text-slate-600">{persisted.length} records persisted</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={loadPersisted}
+              disabled={loadingDb}
+              className="h-6 px-2 text-[10px] font-mono border-slate-700 text-slate-400 hover:bg-slate-800"
+            >
+              <RefreshCw className={`h-3 w-3 mr-1 ${loadingDb ? 'animate-spin' : ''}`} /> refresh
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={persisted.length === 0}
+              onClick={() => {
+                const csv = toCsv(persisted);
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bgp-run-archive-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast({ title: 'Archive exported', description: `${persisted.length} runs downloaded as CSV.` });
+              }}
+              className="h-6 px-2 text-[10px] font-mono border-slate-700 text-slate-400 hover:bg-slate-800"
+            >
+              <Download className="h-3 w-3 mr-1" /> CSV
+            </Button>
+          </div>
+        </div>
+        <ScrollArea className="max-h-64 overflow-y-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-slate-800 hover:bg-transparent">
+                <TableHead className="text-[10px] font-mono text-slate-500">Timestamp</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500">Scenario</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500">Variant</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500">Phase</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500 text-right">MTTD</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500 text-right">MTTM</TableHead>
+                <TableHead className="text-[10px] font-mono text-slate-500 text-center">MSR</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {persisted.slice(0, 30).map((r) => (
+                <TableRow key={r.id} className="border-slate-900">
+                  <TableCell className="text-[9.5px] font-mono text-slate-500 py-1.5">
+                    {new Date(r.createdAt).toLocaleTimeString([], { hour12: false })}
+                  </TableCell>
+                  <TableCell className="text-[10px] font-mono text-slate-300 py-1.5">{r.scenarioId}</TableCell>
+                  <TableCell className="py-1.5">
+                    <Badge variant="outline" className={`text-[9px] h-4 px-1.5 ${r.variantLabel?.startsWith('A') ? 'border-violet-800 text-violet-300 bg-violet-950/40' : 'border-slate-700 text-slate-400'}`}>
+                      {r.variantLabel ?? 'custom'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <Badge variant="outline" className={`text-[9px] h-4 px-1.5 ${phaseBadge(r.phase)}`}>{r.phase}</Badge>
+                  </TableCell>
+                  <TableCell className="text-[10px] font-mono text-amber-300 text-right py-1.5">{r.mttd !== null ? `${r.mttd}s` : '—'}</TableCell>
+                  <TableCell className="text-[10px] font-mono text-orange-300 text-right py-1.5">{r.mttm !== null ? `${r.mttm}s` : '—'}</TableCell>
+                  <TableCell className="text-center py-1.5">
+                    {r.msr ? <CheckCircle2 className="h-3 w-3 text-emerald-400 mx-auto" /> : <XCircle className="h-3 w-3 text-slate-600 mx-auto" />}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {persisted.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-[11px] font-mono text-slate-600 py-6">
+                    <History className="h-4 w-4 mx-auto mb-1.5 text-slate-700" />
+                    archive empty — completed runs persist here automatically
                   </TableCell>
                 </TableRow>
               )}

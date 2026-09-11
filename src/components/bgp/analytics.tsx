@@ -67,12 +67,13 @@ export function AnalyticsPanel({ state }: { state: SimState }) {
           { icon: Percent, label: 'MSR', value: `${metrics.msrPercent}%`, tone: 'text-emerald-300', sub: 'mitigation success rate' },
           { icon: Gauge, label: 'Detection', value: `${metrics.detectionRate}%`, tone: 'text-cyan-300', sub: `${metrics.totalRuns} runs recorded` },
         ].map((m) => (
-          <div key={m.label} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+          <div key={m.label} className="relative rounded-lg border border-slate-800 bg-slate-950/60 p-3 card-lift overflow-hidden">
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b ${m.tone.replace('text-', 'from-')}-600/60 to-transparent`} />
             <div className="flex items-center gap-1.5 text-slate-500">
               <m.icon className="h-3.5 w-3.5" />
               <span className="text-[10px] font-mono uppercase tracking-wider">{m.label}</span>
             </div>
-            <div className={`mt-1.5 font-mono text-xl font-bold ${m.tone}`}>{m.value}</div>
+            <div className={`mt-1.5 font-mono text-xl font-bold tabular-nums ${m.tone}`}>{m.value}</div>
             <div className="text-[10px] font-mono text-slate-600 mt-0.5">{m.sub}</div>
           </div>
         ))}

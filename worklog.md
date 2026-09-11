@@ -77,3 +77,49 @@ Unresolved issues / risks:
 - sim-runs API exists but frontend doesn't yet sync run history to DB automatically (next phase candidate)
 - Possible next-phase features: AI assistant chat (z-ai-web-dev-sdk LLM) analyzing sim state, auto-benchmark runner (S1-S6 sequential), RIB verification log viewer, route-map config preview, export run history CSV, keyboard shortcuts
 - Watch for: engine hot-reload restarts state when engine.ts is edited (expected dev behavior)
+
+---
+Task ID: 8
+Agent: main
+Task: QA round + new features (AI Copilot, auto-benchmark sweep, engine-side run persistence, CSV export, keyboard shortcuts) + styling polish
+
+Work Log:
+- QA pass via agent-browser (through gateway :81):
+  - Verified full attack lifecycle E2E: S2 inject → detect (MTTD 5s) → quarantine LP0+no-export → RIB verify → MTTM 10s → withdraw → rollback
+  - All 5 tabs render, no console errors, mobile 390px no horizontal overflow, VLM visual checks passed
+  - Discovered the concurrent cron review job (job 376285) actively tests the app every 15 min — it pauses/injects/resets mid-test (environmental interference, not a bug; sweep runner made robust against it)
+- NEW: AI Copilot tab (/api/ai-assistant, z-ai-web-dev-sdk LLM backend-only)
+  - POST /api/ai-assistant/route.ts with BGP domain system prompt + machine-generated live state context (routes, trust, ML, policy actions, metrics, last 12 events)
+  - src/components/bgp/ai-assistant.tsx: chat UI with markdown rendering, 4 suggested analysis prompts, copilot visibility panel, loading state
+  - Verified: copilot correctly cited live state (quarantined 192.0.2.0/24 LP0, healthy routes LP100/trust 0.98, metrics, active S2)
+- NEW: Auto-Benchmark Sweep (src/components/bgp/auto-benchmark.tsx)
+  - Sequencer: injects S1→S6, waits for terminal phase (rolledback/failed) per scenario, 1.5s settle gap, abort button, progress bar + per-scenario chips
+  - Robust against interference: auto-resumes paused sim, re-injects lost attacks (grace period), detects engine resets (history shrink), archived-run detection, 150s timeout watchdog
+  - Verified: full sweep completed 6/6 mitigated (~2.5 min), all runs recorded
+- NEW: Engine-side run persistence (single-writer dedup fix)
+  - Problem found: client-side sync in page.tsx duplicated runs when multiple browsers attached (reviewer + operator both POSTed same runs)
+  - Fix: engine (mini-services/bgp-sim) now POSTs each finalized run to localhost:3000/api/sim-runs itself (fire-and-forget with retry-on-failure via dedupe set); bootId disambiguates across engine restarts
+  - Engine now tracks variantLabel server-side ('A{n} preset' | 'custom' | 'A4 · Full System') exposed in SimState; config:reset uses new engine.resetConfig()
+  - Removed client-side persistence effect from page.tsx; header badge + copilot context read state.variantLabel
+- NEW: Run Archive (SQLite) section in Benchmark tab: persisted records table (timestamp/scenario/variant/phase/MTTD/MTTM/MSR), refresh button, CSV export download
+- NEW: Keyboard shortcuts: Space (run/pause), R (reset), 1-5 (tabs), ? (help overlay modal)
+- Styling polish:
+  - PhaseSteps component in active-run header strip (injected→detected→mitigated→rolledback progress pills with animation)
+  - Metric cards: gradient accent bar + card-lift hover + tabular-nums
+  - Pipeline strip: pulsing arrows when running
+  - Tab icons + violet AI COPILOT tab styling with live dot
+  - Custom global scrollbars (thin dark theme), NOC grid background texture, gradient header, shortcut kbd styling
+  - globals.css: scrollbar-none/scrollbar-thin utilities, glow-dot, card-lift, noc-grid-bg
+- Fixed: lint errors (setState-in-effect → interval-callback pattern with latest-value refs; ref-during-render → effect sync)
+- Final verification: lint clean, both services healthy (3000 + 3010), engine persistence writing single records with correct variant labels, no console errors, mobile OK
+
+Stage Summary:
+- App now has 5 tabs: CONTROL ROOM / ANALYTICS / BENCHMARK (+sweep+archive+CSV) / AI COPILOT (LLM) / ARCHITECTURE
+- Run persistence: engine is the single writer → SQLite archive with variant labels, no duplicates
+- All 3 top next-phase candidates from previous round implemented (AI assistant, auto-benchmark, CSV export + run sync)
+
+Unresolved issues / risks:
+- The cron review job's concurrent interactions can reset/inject mid-operator-test (by design; sweep is robust, manual tests can be interrupted — consider pausing the cron job if clean manual QA is needed)
+- Engine hot-reload (bun --hot) resets sim state on engine file edits — expected dev behavior
+- variantLabel shows 'custom' whenever any slider is touched (even if re-touched to default) — cosmetic, could compare against DEFAULT_CONFIG to detect "equivalent to A4"
+- Next-phase candidates: RIB verification log viewer, route-map config preview/export (FRR-style route-map text), per-scenario deep-dive analytics, light/dark theme toggle, copilot streaming responses

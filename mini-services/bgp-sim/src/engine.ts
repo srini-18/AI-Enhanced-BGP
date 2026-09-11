@@ -103,9 +103,13 @@ export class BGPSimEngine {
   simTime = 0;
   tick = 0;
   running = false;
+  /** config variant label tracked server-side (preset A0-A4 / custom) */
+  variantLabel = 'A4 · Full System';
   private eventSeq = 1;
   private runSeq = 0;
   private runInternalSeq = 0;
+  /** engine boot id — used to disambiguate persisted runs across engine restarts */
+  private readonly bootId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   private routes = new Map<string, PrefixRuntime>();
   private events: SimEvent[] = [];
   private trustHistory: TrustPoint[] = [];
@@ -115,6 +119,8 @@ export class BGPSimEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
   private onChange: (state: SimState) => void = () => {};
   private rng = Math.random;
+  /** dedupe set: runs already persisted to the run archive */
+  private persistedRuns = new Set<string>();
 
   constructor() {
     this.resetRoutes();
@@ -225,6 +231,7 @@ export class BGPSimEngine {
 
   setConfig(patch: unknown) {
     this.config = deepMerge(this.config, patch);
+    this.variantLabel = 'custom';
     if (this.running) this.scheduleTick(); // apply tick interval live
     this.log('info', 'config', 'Simulation configuration updated live by operator.');
     this.emit();
@@ -233,6 +240,24 @@ export class BGPSimEngine {
   applyPreset(variant: string): boolean {
     const v = variant.toUpperCase();
     const c = clone(DEFAULT_CONFIG);
+    const ok = this.applyPresetConfig(v, c);
+    if (!ok) return false;
+    this.config = c;
+    this.variantLabel = `${v} preset`;
+    this.log('info', 'config', `Ablation preset ${v} applied — subsystem flags reconfigured.`);
+    this.emit();
+    return true;
+  }
+
+  /** restore full-system defaults (used by the "reset defaults" control) */
+  resetConfig() {
+    this.config = clone(DEFAULT_CONFIG);
+    this.variantLabel = 'A4 · Full System';
+    this.log('info', 'config', 'Configuration restored to full-system defaults (A4).');
+    this.emit();
+  }
+
+  private applyPresetConfig(v: string, c: SimConfig): boolean {
     if (v === 'A0') {
       c.ml.enabled = false;
       c.trust.enabled = false;
@@ -269,9 +294,6 @@ export class BGPSimEngine {
     } else {
       return false;
     }
-    this.config = c;
-    this.log('info', 'config', `Ablation preset ${v} applied — subsystem flags reconfigured.`);
-    this.emit();
     return true;
   }
 
@@ -965,6 +987,42 @@ export class BGPSimEngine {
   private finalizeRun(run: RunResult) {
     this.history.push(run);
     if (this.history.length > 60) this.history.splice(0, this.history.length - 60);
+    this.persistRun(run);
+  }
+
+  /**
+   * Fire-and-forget persistence of a completed run to the Next.js run archive
+   * (POST /api/sim-runs on port 3000). Exactly one writer (the engine) — avoids
+   * duplicate records when multiple browser clients are attached.
+   */
+  private persistRun(run: RunResult) {
+    const key = `${this.bootId}:${run.runId}:${run.scenarioId}`;
+    if (this.persistedRuns.has(key)) return;
+    this.persistedRuns.add(key);
+    const payload = {
+      runId: run.runId,
+      scenarioId: run.scenarioId,
+      scenarioName: run.scenarioName,
+      variantLabel: this.variantLabel,
+      mttd: run.mttd,
+      mttm: run.mttm,
+      msr: run.msr,
+      ribVerified: run.ribVerified,
+      appliedPolicy: run.appliedPolicy,
+      phase: run.phase,
+      groundTruth: run.groundTruth,
+      detectedClass: run.detectedClass,
+      comparison: run.comparison,
+      bootId: this.bootId,
+    };
+    fetch('http://localhost:3000/api/sim-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runs: [payload] }),
+    }).catch(() => {
+      // archive is best-effort; drop silently (e.g. Next dev recompile window)
+      this.persistedRuns.delete(key);
+    });
   }
 
   private updateNodeStatuses() {
@@ -1052,6 +1110,7 @@ export class BGPSimEngine {
       running: this.running,
       tick: this.tick,
       config: clone(this.config),
+      variantLabel: this.variantLabel,
       nodes,
       edges,
       routes,
