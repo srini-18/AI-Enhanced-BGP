@@ -25,6 +25,29 @@ const CLASS_TONE: Record<number, string> = {
   0: 'text-emerald-400 border-emerald-900 bg-emerald-950/40',
 };
 
+/** threat severity: 5-segment meter, red = hijack-tier, orange = leak, amber = churn */
+const SEVERITY: Record<string, { level: number; label: string; seg: string }> = {
+  S1: { level: 4, label: 'sev 4/5', seg: 'bg-red-500' },
+  S2: { level: 5, label: 'sev 5/5', seg: 'bg-red-500' },
+  S3: { level: 2, label: 'sev 2/5', seg: 'bg-amber-500' },
+  S4: { level: 5, label: 'sev 5/5', seg: 'bg-red-500' },
+  S5: { level: 3, label: 'sev 3/5', seg: 'bg-orange-500' },
+  S6: { level: 3, label: 'sev 3/5', seg: 'bg-orange-500' },
+};
+
+function SeverityMeter({ level, seg, label }: { level: number; seg: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1" title={`threat severity ${label}`} aria-label={`threat severity ${level} of 5`}>
+      <span className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <span key={i} className={`w-1 h-2 rounded-[1px] ${i <= level ? seg : 'bg-slate-800'}`} />
+        ))}
+      </span>
+      <span className="text-[8.5px] font-mono text-slate-500 tabular-nums">{label}</span>
+    </span>
+  );
+}
+
 export function AttackPanel({ activeScenarioId, onInject, onWithdraw, onCustom }: Props) {
   const [prefix, setPrefix] = useState('203.0.113.0/24');
   const [originAs, setOriginAs] = useState('65010');
@@ -99,8 +122,18 @@ export function AttackPanel({ activeScenarioId, onInject, onWithdraw, onCustom }
                         {s.groundTruthClass === 3 ? 'HIJACK' : s.groundTruthClass === 2 ? 'LEAK' : 'CHURN'}
                       </Badge>
                     </div>
-                    <div className="text-[10px] font-mono text-slate-500 truncate">
-                      {s.prefix} · AS{s.injectedOrigin} {s.historical && '· replay'}
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="text-[10px] font-mono text-slate-500 truncate">
+                        {s.prefix} · AS{s.injectedOrigin} {s.historical && <span className="text-violet-400/80">· replay</span>}
+                      </div>
+                      <SeverityMeter {...(SEVERITY[s.id] ?? { level: 3, label: 'sev 3/5', seg: 'bg-orange-500' })} />
+                    </div>
+                    <div className="flex items-center gap-2 text-[9px] font-mono text-slate-600">
+                      <span title="auto-withdraw timer" className="shrink-0">⏱ {s.defaultDurationSec}s</span>
+                      <span className="w-px h-2 bg-slate-800" />
+                      <span title="best-path competition" className="shrink-0">{s.bestPathCompetition ? 'best-path race' : 'longest-match'}</span>
+                      <span className="w-px h-2 bg-slate-800" />
+                      <span className="truncate" title="attacker vantage">AS{s.attackerNode}</span>
                     </div>
                     {active && (
                       <div className="mt-1.5 flex items-center gap-1 text-[10px] font-mono text-red-400">

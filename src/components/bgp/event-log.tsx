@@ -27,7 +27,6 @@ const SOURCE_STYLE: Record<string, string> = {
 const FILTER_SOURCES = ['attack', 'detection', 'policy', 'shadow', 'rollback'] as const;
 
 export function EventLog({ events }: { events: SimEvent[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const [active, setActive] = useState<Set<string>>(new Set());
@@ -43,8 +42,12 @@ export function EventLog({ events }: { events: SimEvent[] }) {
   }, []);
 
   useEffect(() => {
-    if (stickToBottom.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // IMPORTANT: assign scrollTop directly instead of scrollIntoView() —
+    // scrollIntoView({ block: 'end' }) scrolls EVERY ancestor (including the
+    // window), hijacking the page scroll position on every event update.
+    const el = scrollRef.current;
+    if (el && stickToBottom.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [events]);
 
@@ -123,7 +126,6 @@ export function EventLog({ events }: { events: SimEvent[] }) {
             </div>
           );
         })}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

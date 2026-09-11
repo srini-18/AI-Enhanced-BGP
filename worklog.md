@@ -259,3 +259,60 @@ Unresolved issues / risks:
 - Sound alerts verified code-wise (no console errors, mute state, M-key) but audible output cannot be confirmed in headless browser — verify in a real browser session
 - Headless VLM calls occasionally time out under load (retry with -o output file works)
 - Next-phase candidates: copilot streaming markdown table rendering, per-prefix drill-down page, replay export as GIF, config diff view (current vs A4 default), light theme (if requested)
+
+---
+Task ID: 12 (interim)
+Agent: main
+Task: QA round — critical scroll-hijack fix + dev-server OOM recovery
+
+Work Log:
+- QA via agent-browser THROUGH GATEWAY :81 (loading localhost:3000 directly shows engine-offline because relative socket URL needs gateway origin — not a bug)
+- CRITICAL UX BUG FOUND & FIXED: event-log.tsx used bottomRef.scrollIntoView({block:'end'}) on every events change — scrollIntoView scrolls ALL ancestors INCLUDING THE WINDOW → page constantly scrolled down while sim running (tabs slid out from under the cursor, clicks missed, felt broken). Fix: el.scrollTop = el.scrollHeight on the container only; removed bottomRef. Verified: 13 scroll samples all 0 over 13s, mouse tab clicks now land.
+- DEV SERVER OOM KILLED (dmesg: next-server pid 1760, anon-rss 1.9GB, total-vm 30GB after ~6h uptime) → blank Z.ai-logo 502 placeholder page. Recovery: wiped .next, relaunched via /tmp/start-dev.sh (setsid + exec bun run dev >> dev.log) — daemon survives across tool-call boundaries (verified 5+ min). Old `bun run dev` parent was zombie (child dead, no respawn).
+- agent-browser `find role tab click "ANALYTICS"` resolves to the WRONG tab (CONTROL ROOM) — CLI locator quirk; use keyboard press 1-5 or exact-coordinate mouse clicks for QA
+- Verified after fixes: all 5 tabs render; Analytics charts render (13 recharts surfaces incl radar + 24 bars); mouse+keyboard tab switching OK; S4 YouTube-2008 full lifecycle (inject→detect→quarantine→rollback, trust restored); copilot streaming cites live state; mobile 390px no overflow; lint clean
+- Empty copilot ASK is guarded (send() returns early) — earlier "unrecoverable error" was the OOM killing the server mid-session, not an app bug
+
+Stage Summary:
+- App healthy again; one critical UX bug fixed permanently (scroll hijack)
+- Dev server restarted via daemon script /tmp/start-dev.sh (use this pattern if it dies again: `setsid /tmp/start-dev.sh &`)
+
+Unresolved issues / risks:
+- Turbopack dev server memory growth over hours may OOM again — if 502/logo page appears, rerun /tmp/start-dev.sh (it wipes nothing now; optionally rm -rf .next first)
+- Next round: mandatory styling details + new features (config diff, per-prefix sparkline drill-down, copilot markdown tables)
+
+---
+Task ID: 13
+Agent: main
+Task: Mandatory feature round — config diff, trust sparklines, copilot tables, threat level + styling polish + final verification
+
+Work Log:
+- NEW FEATURE: Config Diff monitor (src/components/bgp/config-diff.tsx)
+  - Flattens live SimConfig vs DEFAULT_CONFIG (A4 baseline) into dot-paths; grouped diff view by subsystem with on→off toggle chips (red), numeric changes (amber), enabled (emerald); change-count badge / "matches A4 baseline" state; "N subsystems disabled" warning chip; restore-A4 button; collapsible, placed ABOVE ControlCenter in left column (above the fold)
+  - Verified live: applying A0 → "6 changed" badge + 6 sections (ML/Trust/Shadow/Policy/Rollback/RIB each `on→off`); restoring A4 → "matches A4 baseline"
+- NEW FEATURE: Trust trajectory sparkline (src/components/bgp/trust-sparkline.tsx)
+  - Pure-SVG per-prefix trust history (last 80 samples): area+line colored by last-trust tier, policy-tier threshold bands (shaded + dashed lines), minimum marker dot, last-point dot, t-axis labels; sample count + min in section header
+  - Wired into route-table expanded diagnostics (TRUST TRAJECTORY section at top); RouteRow receives prefix-filtered trustHistory + live thresholds
+  - VLM verified during live S2 hijack: trust drop to 0.28 visible with tier bands; 41 samples · min 0.28
+- NEW FEATURE: Copilot markdown table rendering (ai-assistant.tsx)
+  - renderMarkdown now accumulates |-rows; validates header/separator/body structure; renders styled table (violet headers, zebra rows, borders, horizontal scroll); invalid table blocks gracefully fall back to paragraphs
+  - VLM verified: LLM asked for defense comparison → 6-column table (Defense Variant/MTTD/MTTM/MSR/Detection Rate/Notes) rendered with clean alignment
+- NEW FEATURE: Threat condition level (page.tsx ThreatCondition)
+  - DEFCON-style L5 ALL CLEAR → L1 QUARANTINE derived from quarantined routes + activeRun phase + anomalous count + MSR; 5-segment meter in header, tooltip explains derivation; hidden on xs screens
+  - Observed live: L3 ELEVATED during anomaly, L5 ALL CLEAR when stable
+- STYLING (mandatory): 
+  - Attack cards: 5-segment severity meters (S1 4/5, S2 5/5, S3 2/5, S4 5/5, S5/S6 3/5 — VLM read exact levels) + metadata strip (⏱ duration · best-path race/longest-match · attacker ASN)
+  - Analytics metric cards: MiniSpark trend sparklines (MTTD/MTTM down-good, running MSR/detection up-good from history) + trend-direction icons colored good/bad
+  - ARCHITECTURE docs: 3 new Operator Tooling cards documenting the round's features
+- Verification: lint clean (exit 0); both services alive (3000 + 3010); clean reload 0 console errors; mobile 390px no overflow; all 5 tabs render; S2 full lifecycle with sparkline live; VLM checks passed on 4 screenshots (features, sparkline, analytics, copilot table)
+- Timing note for QA: an attack route's default 120s sim duration elapses in ~25s real time (sim clock ~5x real) — expand route rows quickly after injection to inspect live diagnostics, or the route completes lifecycle and leaves the RIB
+
+Stage Summary:
+- All mandatory requirements delivered: 4 new features + styling details across attack cards, metric cards, header, docs
+- App stable: lint clean, no console errors, mobile responsive, E2E attack lifecycle verified with new diagnostics
+
+Unresolved issues / risks:
+- Turbopack dev server long-uptime memory growth (OOM'd once at ~6h/1.9GB) — if 502/logo page appears, rerun `setsid /tmp/start-dev.sh &` (optionally rm -rf .next first); consider periodic restart cadence on long sessions
+- Concurrent cron reviewer still resets/injects every ~15 min (environmental; resets clear route-table expansion state mid-inspection)
+- agent-browser `find role tab click "ANALYTICS"` mis-resolves to CONTROL ROOM (CLI locator quirk) — use keyboard press 1-5 or coordinate mouse clicks
+- Next-phase candidates: per-prefix drill-down page with full history replay, copilot streaming table progressive render, topology edge-label overlays for active hijack paths, exportable PDF run reports, ablation comparison mode (side-by-side A0 vs A4 runs)

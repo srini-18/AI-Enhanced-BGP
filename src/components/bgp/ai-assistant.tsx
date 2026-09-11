@@ -107,8 +107,52 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode {
   });
 }
 
+/** Parse a markdown table block: header row, --- separator, body rows. */
+function parseTableRow(line: string): string[] {
+  return line
+    .replace(/^\s*\|/, '')
+    .replace(/\|\s*$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+function isSeparatorRow(line: string): boolean {
+  return /^\s*\|?[\s:|-]*-{3,}[\s:|-]*\|?\s*$/.test(line) && line.includes('-');
+}
+
+function renderMarkdownTable(rows: string[], key: string): React.ReactNode {
+  const header = parseTableRow(rows[0]);
+  const body = rows.slice(2).map(parseTableRow).filter((r) => r.some((c) => c !== ''));
+  return (
+    <div key={key} className="my-1.5 overflow-x-auto scrollbar-thin rounded-lg border border-slate-700/70">
+      <table className="w-full text-[10.5px] font-mono border-collapse">
+        <thead>
+          <tr className="bg-slate-800/60">
+            {header.map((h, j) => (
+              <th key={j} className="px-2 py-1 text-left text-violet-200 font-semibold border-b border-slate-700 whitespace-nowrap">
+                {renderInline(h, `${key}-th-${j}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, i) => (
+            <tr key={i} className={i % 2 === 0 ? 'bg-slate-900/40' : 'bg-slate-950/60'}>
+              {header.map((_, j) => (
+                <td key={j} className="px-2 py-1 text-slate-300 border-b border-slate-800/60 whitespace-nowrap">
+                  {renderInline(r[j] ?? '', `${key}-td-${i}-${j}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function renderMarkdown(text: string): React.ReactNode {
-  // markdown: **bold**, `code`, bullets (- / *), numbered lists, ### headers, ASN/prefix mono
+  // markdown: **bold**, `code`, bullets (- / *), numbered lists, ### headers, | tables |, ASN/prefix mono
   const lines = text.split('\n');
   const out: React.ReactNode[] = [];
   let listBuf: string[] = [];
@@ -135,7 +179,31 @@ function renderMarkdown(text: string): React.ReactNode {
     listBuf = [];
   };
 
+  let tableBuf: string[] = [];
+
+  const flushTable = (key: string) => {
+    if (tableBuf.length === 0) return;
+    if (tableBuf.length >= 2 && isSeparatorRow(tableBuf[1])) {
+      out.push(renderMarkdownTable(tableBuf, key));
+    } else {
+      // not a valid table — emit lines as paragraphs
+      tableBuf.forEach((l, i) => out.push(
+        <p key={`${key}-p${i}`} className={l.trim() === '' ? 'h-2' : 'leading-relaxed'}>
+          {renderInline(l, `${key}-p${i}`)}
+        </p>
+      ));
+    }
+    tableBuf = [];
+  };
+
   lines.forEach((line, i) => {
+    // table row accumulation
+    if (line.trim().startsWith('|') && line.includes('|', 1)) {
+      flushList(`l${i}`);
+      tableBuf.push(line);
+      return;
+    }
+    flushTable(`t${i}`);
     const bullet = line.match(/^\s*[-*]\s+(.*)$/);
     const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
     if (bullet) {
@@ -167,6 +235,7 @@ function renderMarkdown(text: string): React.ReactNode {
     );
   });
   flushList('l-end');
+  flushTable('t-end');
   return out;
 }
 

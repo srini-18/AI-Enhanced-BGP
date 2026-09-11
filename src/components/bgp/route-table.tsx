@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { FEATURE_NAMES, RouteSnapshot, SimState } from '@/lib/bgp-sim/types';
+import { FEATURE_NAMES, RouteSnapshot, SimState, TrustPoint } from '@/lib/bgp-sim/types';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck, TrendingDown } from 'lucide-react';
+import { TrustSparkline } from './trust-sparkline';
 
 const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
   normal: { badge: 'border-emerald-800 bg-emerald-950/60 text-emerald-300', dot: 'bg-emerald-400', label: 'NORMAL' },
@@ -68,6 +69,8 @@ export function RouteTable({ state }: { state: SimState }) {
               onToggle={() => setExpanded(isOpen ? null : r.route.prefix)}
               rollbackTicks={state.config.rollback.requiredNormalTicks}
               simTime={state.simTime}
+              trustHistory={state.trustHistory.filter((p) => p.prefix === r.route.prefix)}
+              thresholds={state.config.policy.thresholds}
             />
           );
         })}
@@ -86,6 +89,8 @@ function RouteRow({
   onToggle,
   rollbackTicks,
   simTime,
+  trustHistory,
+  thresholds,
 }: {
   r: RouteSnapshot;
   st: { badge: string; dot: string; label: string };
@@ -95,6 +100,8 @@ function RouteRow({
   onToggle: () => void;
   rollbackTicks: number;
   simTime: number;
+  trustHistory: TrustPoint[];
+  thresholds: { normal: number; suspicious: number; leak: number };
 }) {
   const flashKey = `${r.status}:${r.route.locPref}`;
   return (
@@ -164,6 +171,20 @@ function RouteRow({
 
               {isOpen && (
                 <div className="px-3 pb-3 space-y-3 border-t border-slate-800 pt-2">
+                  {/* trust trajectory sparkline */}
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <TrendingDown className="h-3 w-3 text-cyan-400" />
+                      <span className="text-[10px] font-semibold tracking-wider text-slate-400">TRUST TRAJECTORY</span>
+                      <span className="ml-auto text-[9px] font-mono text-slate-600">
+                        {trustHistory.length} samples · min {trustHistory.length > 0 ? Math.min(...trustHistory.map((p) => p.trust)).toFixed(2) : '—'} · tier bands shaded
+                      </span>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/70 px-1.5 pt-1 pb-0.5">
+                      <TrustSparkline points={trustHistory} thresholds={thresholds} ariaLabel={`trust history for ${r.route.prefix}`} />
+                    </div>
+                  </div>
+
                   {/* explainability */}
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useBgpSim } from '@/lib/bgp-sim/client';
-import { SimConfig, RunResult, SimEvent } from '@/lib/bgp-sim/types';
+import { SimConfig, RunResult, SimEvent, SimState } from '@/lib/bgp-sim/types';
 import { playAlert, alertForEvent, primeAudioUnlock, isMuted, setMuted } from '@/lib/bgp-sim/sound';
 import { TopologyGraph } from '@/components/bgp/topology-graph';
 import { ControlCenter } from '@/components/bgp/control-center';
@@ -16,6 +16,7 @@ import { RibLogViewer } from '@/components/bgp/rib-log';
 import { RouteMapPreview } from '@/components/bgp/route-map-preview';
 import { ScenarioDeepDive } from '@/components/bgp/scenario-deepdive';
 import { TimeTravelScrubber } from '@/components/bgp/time-travel';
+import { ConfigDiff } from '@/components/bgp/config-diff';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,52 @@ import {
   Play, Pause, RotateCcw, Radio, CircleDot, Layers, SlidersHorizontal, BarChart3,
   Trophy, BookOpen, Sparkles, Keyboard, Volume2, VolumeX,
 } from 'lucide-react';
+
+/**
+ * NOC threat-condition level (DEFCON-style): derives posture from routes +
+ * active run phase. L5 all-clear → L1 active hijack quarantine.
+ */
+function ThreatCondition({ state }: { state: SimState }) {
+  const routes = Object.values(state.routes);
+  const quarantined = routes.filter((r) => r.underOverride && r.route.locPref === 0).length;
+  const anomalous = routes.filter((r) => r.status !== 'normal' || r.underOverride).length;
+  const phase = state.activeRun?.phase;
+
+  let level = 5;
+  let label = 'ALL CLEAR';
+  let tone = 'border-emerald-800 text-emerald-300 bg-emerald-950/40';
+  if (quarantined > 0 || phase === 'mitigated') {
+    level = 1;
+    label = 'QUARANTINE';
+    tone = 'border-red-700 text-red-300 bg-red-950/50';
+  } else if (phase === 'detected' || phase === 'injected') {
+    level = 2;
+    label = 'ENGAGED';
+    tone = 'border-amber-700 text-amber-300 bg-amber-950/40';
+  } else if (anomalous > 0) {
+    level = 3;
+    label = 'ELEVATED';
+    tone = 'border-orange-800 text-orange-300 bg-orange-950/40';
+  } else if (state.metrics.totalRuns > 0 && state.metrics.msrPercent < 100) {
+    level = 4;
+    label = 'GUARDED';
+    tone = 'border-yellow-800 text-yellow-300 bg-yellow-950/30';
+  }
+
+  return (
+    <span
+      className={`hidden sm:inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded border font-semibold transition-colors ${tone}`}
+      title={`threat condition L${level} — ${label}${quarantined ? ` · ${quarantined} route(s) quarantined` : anomalous ? ` · ${anomalous} anomalous` : ''}`}
+    >
+      <span className="flex gap-[2px]" aria-hidden>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <span key={i} className={`w-[3px] h-2 rounded-[1px] ${i >= level ? 'bg-current' : 'bg-slate-700/60'}`} />
+        ))}
+      </span>
+      <span className="text-[9.5px] tracking-wider">L{level} {label}</span>
+    </span>
+  );
+}
 
 function PipelineStrip({ config, running }: { config: SimConfig; running: boolean }) {
   const stages = [
@@ -246,6 +293,7 @@ export default function Home() {
               <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border transition-colors ${connected ? 'border-emerald-800 text-emerald-300 bg-emerald-950/40' : 'border-red-800 text-red-400 bg-red-950/40'}`}>
                 <CircleDot className="h-2.5 w-2.5" /> {connected ? 'LINK' : 'OFFLINE'}
               </span>
+              {state && <ThreatCondition state={state} />}
               <span className="text-slate-500">t=</span>
               <span className="text-emerald-300 w-16 tabular-nums">{(state?.simTime ?? 0).toFixed(0)}s</span>
               <span className="text-slate-600">tick {state?.tick ?? 0}</span>
@@ -419,16 +467,19 @@ export default function Home() {
             <TabsContent value="control" className="mt-3">
               <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_340px] gap-4 items-start">
                 <div className="xl:sticky xl:top-28 max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 scrollbar-thin">
-                  <ControlCenter
-                    config={state.config}
-                    onUpdate={updateConfig}
-                    onPreset={applyPreset}
-                    onResetConfig={resetConfig}
-                    onLoadPreset={(cfg) => {
-                      updateConfig(cfg);
-                      toast({ title: 'Preset loaded', description: 'Configuration applied to the live simulation engine.' });
-                    }}
-                  />
+                  <ConfigDiff config={state.config} variantLabel={variantLabel} onResetConfig={resetConfig} />
+                  <div className="mt-3">
+                    <ControlCenter
+                      config={state.config}
+                      onUpdate={updateConfig}
+                      onPreset={applyPreset}
+                      onResetConfig={resetConfig}
+                      onLoadPreset={(cfg) => {
+                        updateConfig(cfg);
+                        toast({ title: 'Preset loaded', description: 'Configuration applied to the live simulation engine.' });
+                      }}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-4 min-w-0">
@@ -635,6 +686,9 @@ Historical defenses compared in parallel:
                       ['Keyboard control', 'Space run/pause · R reset · 1-5 tabs · ? help'],
                       ['Live route-map preview', 'FRR-style config generated from your sliders — copy or download .conf'],
                       ['RIB verification log', 'two-layer commit audit with pass-rate and retry tracking'],
+                      ['Config diff monitor', 'live drift view of every knob vs the A4 baseline — grouped by subsystem with restore button'],
+                      ['Trust trajectory sparklines', 'per-prefix trust history with policy-tier bands and minimum marker inside route diagnostics'],
+                      ['Threat condition level', 'DEFCON-style L5→L1 posture indicator in the header, derived from routes and run phase'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>
