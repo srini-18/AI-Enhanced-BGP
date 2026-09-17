@@ -6,11 +6,17 @@ import { SimState, SimConfig, CustomAttackSpec } from './types';
 
 /**
  * BGP simulation socket client.
- * IMPORTANT: connection must go through the gateway with XTransformPort query
- * and path '/' — never a direct localhost URL.
+ *
+ * Connection target is configurable via NEXT_PUBLIC_BGP_SIM_URL
+ * (e.g. `http://localhost:3010` for a standalone two-process deployment).
+ *
+ * Default (env unset): gateway mode — same-origin `/?XTransformPort=3010`,
+ * letting the reverse proxy route the upgrade to the engine port. The path
+ * must stay '/' in both modes.
  */
 export function createBgpSocket(): Socket {
-  return io('/?XTransformPort=3010', {
+  const target = process.env.NEXT_PUBLIC_BGP_SIM_URL || '/?XTransformPort=3010';
+  return io(target, {
     path: '/',
     transports: ['websocket', 'polling'],
     reconnectionDelay: 800,

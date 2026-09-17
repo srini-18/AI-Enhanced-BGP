@@ -556,3 +556,36 @@ Unresolved issues / risks:
 - Chaos fuzz restore sets engine variantLabel to 'custom' (values exact via deep-merge; Config Diff still confirms baseline) — same cosmetic caveat as rounds 15/16
 - Turbopack dev-server long-uptime OOM risk remains (round 12 recovery recipe: setsid /tmp/start-dev.sh &)
 - Next-phase candidates: watchlist alert digest/export (CSV of transitions), watchlist chip in Analytics, URL-synced RIB filter state, chaos drill "stress mode" (fuzz + concurrent A/B), copilot awareness of watchlist transitions, light theme (if requested), run-comparison table (pick 2 runs side-by-side)
+
+---
+Task ID: 19
+Agent: main
+Task: User request — package the simulation as a pull request against https://github.com/Sudalai-kumar/AI-Enhanced-BGP
+
+Work Log:
+- Read worklog (18 prior rounds); both services alive at start (Next 3000 HTTP 200, engine 3010 handshake 200)
+- GitHub reachable (HTTP 200) but NO credentials available anywhere (no gh CLI, no ~/.git-credentials, no ~/.netrc, no ~/.config/gh, no GH_* env vars, .env only has DATABASE_URL) → a live PR/fork/push is impossible without user-supplied token. Strategy: prepare a 100%-ready-to-push PR kit
+- Cloned upstream @ 816fd9e (v4 ablation commit) to /tmp/pr-work/AI-Enhanced-BGP; studied structure (Python research repo, MIT, conventional-commit style) and README conventions
+- Created branch feat/web-simulation; assembled simulation/ (105 files: engine/ ← mini-services/bgp-sim, webapp/ ← Next.js app incl. prisma schema, public, bun.lock)
+- Portability adaptations in PR copy: package renamed ai-enhanced-bgp-webapp, dev script stripped of sandbox tee, .env.example added (DATABASE_URL + optional NEXT_PUBLIC_BGP_SIM_URL), engine README rewritten (full subsystem table + socket API), z-ai-web-dev-sdk verified on public npm (0.0.18) with graceful error fallback → standalone-safe
+- LIVE CODE IMPROVEMENT: src/lib/bgp-sim/client.ts socket target now env-configurable (NEXT_PUBLIC_BGP_SIM_URL, default remains gateway '/?XTransformPort=3010' → sandbox unaffected, standalone deployments gain direct-URL mode)
+- Wrote simulation/README.md (120 lines: badges, screenshots, feature list, ASCII architecture, 2-terminal quickstart, research-concept→feature mapping table) + engine/README.md (47 lines)
+- Captured 3 live screenshots via agent-browser through gateway :81 (control-room, analytics, benchmark @1280×577) → simulation/docs/img/
+- Updated upstream README.md: new "🖥️ Interactive Web Simulation (NEW)" section before Architecture + simulation/ entry in repo tree (python insert, verified)
+- Committed e3bb42f "feat(simulation): add interactive web simulation (Next.js control room + real-time socket.io engine)" — 112 files, +20,222 lines
+- Generated deliverables: web-simulation.patch (2.0MB git-am format), ai-enhanced-bgp-web-simulation.zip (1.0MB git-archive), pr-web-simulation.md (PR title+body draft w/ inline screenshots), HOW-TO-OPEN-THE-PR.md (3 options incl. token path)
+- Delivered to download/pr-kit/ (all 4 files) AND public/ (patch/zip/md — servable at /web-simulation.patch etc.)
+- UI: new "Upstream Contribution Kit" card in ARCHITECTURE tab (violet gradient, GitPullRequest icon, PR-ready + branch chips, 3 download buttons, git-am hint) + "Upstream PR kit" entry in Operator Tooling grid; 4 new lucide icons imported
+- Verification: lint exit 0; gateway serves all 3 kit files HTTP 200 with exact byte sizes; PR kit card renders (snapshot shows all links + text); console 0 errors; LINK connected, sim resumed (t=5→20 after Space); patch re-applied on a FRESH upstream clone (git am clean, commit + stat identical — whitespace warnings only, cosmetic from shadcn template configs)
+
+Stage Summary:
+- PR fully prepared: branch feat/web-simulation (e3bb42f) in /tmp/pr-work/AI-Enhanced-BGP, patch/zip/PR-body/instructions in download/pr-kit/ + public/ — user pushes with a GitHub account (Option A: git am + push; Option C: provide a fine-grained token and the assistant finishes fork+PR via API)
+- Live app gained: portable socket URL (env override), PR-kit discovery card with working downloads
+- client.ts change verified non-breaking in sandbox (LINK green, ticks flowing)
+
+Unresolved issues / risks:
+- Cannot open the actual GitHub PR from this sandbox — needs user's GitHub account (see HOW-TO-OPEN-THE-PR.md Option C: token in .env as GH_TOKEN= enables assistant-driven fork+push+PR via REST API)
+- Patch carries cosmetic whitespace warnings on git am (shadcn template files; harmless)
+- Author placeholder "BGP Simulation Contributor <contributor@users.noreply.github.com>" — user should git commit --amend --reset-author after applying
+- Existing risks unchanged: Turbopack OOM long-uptime recipe in round 12, agent-browser fresh-profile localStorage limitation, TOAST_LIMIT=1 replacement behavior
+- Next-phase candidates: token-authenticated PR submission flow, watchlist digest export, run-comparison side-by-side table, light theme

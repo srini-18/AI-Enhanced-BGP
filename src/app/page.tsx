@@ -30,6 +30,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, RotateCcw, Radio, CircleDot, Layers, SlidersHorizontal, BarChart3,
   Trophy, BookOpen, Sparkles, Keyboard, Volume2, VolumeX, Star,
+  GitPullRequest, Download, FileCode2, Archive,
 } from 'lucide-react';
 
 /**
@@ -982,6 +983,7 @@ Historical defenses compared in parallel:
                       ['Route table live posture strip', 'RIB header shows mean τ, the worst-scoring route and the live status mix (hijack / leak / suspicious / recovering) as tone-coded chips'],
                       ['Per-prefix watchlist', 'star any route row (★) to pin it on the operator watchlist — persisted across reloads; when a watched prefix changes status or crosses a trust tier you get a dedicated siren tone, a toast, an amber flash on the row and the header ★ chip lights up; the strip above the RIB shows live τ + status per watched prefix'],
                       ['Expanded keyboard control', 'Space run/pause · R reset · M mute · 1-5 tabs · / RIB search · F anomalous filter · ? grouped operator reference · Esc closes modals — shortcuts are suppressed while the drill-down owns the keyboard'],
+                      ['Upstream PR kit', 'this entire control room is packaged as a ready-to-push pull request against the upstream research repo — grab the patch, PR text and zip below'],
                     ].map(([name, desc]) => (
                       <div key={name} className="rounded border border-slate-800 bg-slate-900/50 p-2.5 hover:border-slate-700 transition-colors">
                         <div className="text-[11px] font-semibold text-slate-200">{name}</div>
@@ -989,6 +991,53 @@ Historical defenses compared in parallel:
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* upstream contribution kit — ready-to-push pull request */}
+                <div className="rounded-lg border border-violet-900/60 bg-gradient-to-br from-violet-950/40 via-slate-950/60 to-slate-950/60 p-4 lg:col-span-2 relative overflow-hidden">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" aria-hidden="true" />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <GitPullRequest className="h-4 w-4 text-violet-300" aria-hidden="true" />
+                    <span className="text-sm font-semibold text-slate-100">Upstream Contribution Kit</span>
+                    <span className="px-1.5 py-px rounded border border-violet-800/60 bg-violet-900/30 text-[10px] font-mono text-violet-200">PR-ready</span>
+                    <span className="px-1.5 py-px rounded border border-slate-800 bg-slate-900/60 text-[10px] font-mono text-slate-400">feat/web-simulation</span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-400 leading-relaxed max-w-3xl">
+                    This control room is packaged as a single-commit pull request against
+                    <a href="https://github.com/Sudalai-kumar/AI-Enhanced-BGP" target="_blank" rel="noreferrer" className="mx-1 text-violet-300 underline decoration-violet-800 hover:decoration-violet-400">Sudalai-kumar/AI-Enhanced-BGP</a>
+                    — 112 files · +20,222 lines on top of upstream <span className="font-mono text-slate-300">main @ 816fd9e</span>. Apply with
+                    <code className="mx-1 px-1.5 py-px rounded bg-slate-900 border border-slate-800 text-[10px] font-mono text-emerald-300">git am web-simulation.patch</code>
+                    then push to your fork. No sandbox credentials are embedded — authorship is yours to reset.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <a
+                      href="/web-simulation.patch"
+                      download
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-violet-800/70 bg-violet-900/40 hover:bg-violet-800/50 text-[11px] font-mono text-violet-100 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-400"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" /> web-simulation.patch
+                      <span className="text-violet-400">2.0 MB</span>
+                    </a>
+                    <a
+                      href="/ai-enhanced-bgp-web-simulation.zip"
+                      download
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-slate-700 bg-slate-900/60 hover:bg-slate-800/70 text-[11px] font-mono text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
+                    >
+                      <Archive className="h-3.5 w-3.5" aria-hidden="true" /> simulation.zip
+                      <span className="text-slate-500">1.0 MB</span>
+                    </a>
+                    <a
+                      href="/pr-web-simulation.md"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-slate-700 bg-slate-900/60 hover:bg-slate-800/70 text-[11px] font-mono text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
+                    >
+                      <FileCode2 className="h-3.5 w-3.5" aria-hidden="true" /> PR title + body
+                    </a>
+                  </div>
+                  <p className="mt-2 text-[10px] font-mono text-slate-600">
+                    kit contents: git-am patch · zip of simulation/ + README · ready-to-paste PR description — full walkthrough in download/pr-kit/HOW-TO-OPEN-THE-PR.md
+                  </p>
                 </div>
               </div>
             </TabsContent>
