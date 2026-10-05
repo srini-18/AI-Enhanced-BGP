@@ -1,0 +1,52 @@
+{
+  "model_version": "bgp-v3.0-empirical-10as",
+  "training_source": "empirical_frr_testbed_10as",
+  "dataset_file": "bgp_real_training.jsonl",
+  "dataset_full_sha256": "3f05be18c1e8ee7d78039fdf76784ff1ecabf8813c6bb55c69416a7638a9437b",
+  "training_timestamp": "2026-09-06T14:28:49.385692Z",
+  "git_commit": "03cfccf6b49efaf9b04d18451dde13ff8811e793",
+  "evaluation_method": "trial_based_holdout (Train=Trials 1..4, Test=Trial 5)",
+  "evaluation_method_note": "Multi-vantage empirical telemetry collected from live 10-AS testbed (AS65001 Core Defender & AS65003 Edge Defender) evaluated via holdout split.",
+  "feature_count": 10,
+  "feature_names": [
+    "as_path_len",
+    "as_path_edit_distance",
+    "origin_as_change",
+    "prefix_mask_len",
+    "announcements_per_minute",
+    "flap_count_5min",
+    "loc_pref_current",
+    "route_age_seconds",
+    "valley_free_violation",
+    "neighbor_diversity"
+  ],
+  "sample_counts": {
+    "total": 435,
+    "train": 348,
+    "test": 87,
+    "false_positive_challenge": 1000
+  },
+  "dataset_sha256": {
+    "full": "3f05be18c1e8ee7d78039fdf76784ff1ecabf8813c6bb55c69416a7638a9437b",
+    "train": "09cb9ef8ba4d9f0a13cde8a6916facd663d55c6f22bd3ededc9842376690714d",
+    "test": "0956bc38260f84e4345117607dc6d120c078895ec71a75aaa096182cba1f543c"
+  },
+  "models": {
+    "random_forest": {
+      "algorithm": "RandomForestClassifier (50 estimators, max_depth=12)",
+      "calibration": "CalibratedClassifierCV (isotonic)",
+      "test_macro_f1": 0.4542,
+      "test_weighted_f1": 0.8141,
+      "false_positive_rate": 0.032,
+      "model_sha256": "4562d4adc1ac8cc9ae44ff0579fa15f11065c17f76fc24598584998a2980430e"
+    },
+    "logistic_regression": {
+      "algorithm": "LogisticRegression (max_iter=1000, balanced)",
+      "calibration": "CalibratedClassifierCV (sigmoid)",
+      "test_macro_f1": 0.4301,
+      "test_weighted_f1": 0.7817,
+      "false_positive_rate": 1.0,
+      "model_sha256": "bed0e00173c7bdad60334acb85961ab197bee806656c420888ed723ebe8c799f"
+    }
+  }
+}
